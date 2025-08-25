@@ -55,12 +55,10 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
           .select('id, plate, model, notes')
           .order('plate', ascending: true);
 
-      if (response != null) {
-        setState(() {
-          _availableCars = List<Map<String, dynamic>>.from(response as List);
-        });
-      }
-    } catch (e) {
+      setState(() {
+        _availableCars = List<Map<String, dynamic>>.from(response as List);
+      });
+        } catch (e) {
       debugPrint('Error loading cars: $e');
       setState(() {
         _availableCars = [];
@@ -634,7 +632,7 @@ class _StyledDropdown extends StatelessWidget {
         border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
       ),
       child: DropdownButtonFormField<String>(
-        value: value,
+        initialValue: value,
         items: items,
         onChanged: onChanged,
         decoration: const InputDecoration(
@@ -703,7 +701,7 @@ class _SuspensionToggle extends StatelessWidget {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeColor: const Color(0xFFFF6B6B),
+            activeThumbColor: const Color(0xFFFF6B6B),
           ),
         ],
       ),
@@ -806,7 +804,7 @@ class _CarSelectionDropdown extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: DropdownButtonFormField<String>(
-                value: selectedCarId,
+                initialValue: selectedCarId,
                 isExpanded: true,
                 decoration: const InputDecoration(
                   border: InputBorder.none,
@@ -861,7 +859,7 @@ class _CarSelectionDropdown extends StatelessWidget {
                         maxLines: 1,
                       ),
                     );
-                  }).toList(),
+                  }),
                 ],
                 onChanged: onChanged,
               ),

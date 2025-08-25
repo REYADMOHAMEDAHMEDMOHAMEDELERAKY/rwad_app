@@ -95,7 +95,7 @@ class WelcomePage extends StatelessWidget {
                 ),
 
                 // Manager Button
-                Container(
+                SizedBox(
                   width: double.infinity,
                   height: 60,
                   child: ElevatedButton.icon(

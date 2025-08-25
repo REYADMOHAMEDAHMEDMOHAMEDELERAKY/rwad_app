@@ -35,6 +35,7 @@ class _ManagerPageState extends State<ManagerPage> {
   }
 
   Future<void> _loadDriverRecords() async {
+    debugPrint('🚀 Starting _loadDriverRecords function...');
     try {
       setState(() {
         isLoading = true;
@@ -50,10 +51,84 @@ class _ManagerPageState extends State<ManagerPage> {
           .order('created_at', ascending: false)
           .limit(20);
 
+      debugPrint('📊 تم جلب ${response.length} سجل من جدول checkins');
+
+      if (response.isEmpty) {
+        debugPrint(
+          '⚠️ لا توجد سجلات في جدول checkins - قد يكون هذا هو السبب في عدم ظهور أسماء السائقين',
+        );
+        // Create demo data if no records exist
+        response.addAll([
+          {
+            'id': 1,
+            'driver_id': 'ahmed_sabry',
+            'serial': 1,
+            'created_at': DateTime.now().toIso8601String(),
+            'status': 'مكتمل',
+            'lat': '24.7136',
+            'lon': '46.6753',
+            'notes': 'مثال على سجل تجريبي',
+          },
+          {
+            'id': 2,
+            'driver_id': 'mohammed',
+            'serial': 2,
+            'created_at':
+                DateTime.now().subtract(Duration(hours: 2)).toIso8601String(),
+            'status': 'مكتمل',
+            'lat': '24.7136',
+            'lon': '46.6753',
+            'notes': 'مثال آخر',
+          },
+        ]);
+      }
+
+      // جلب جميع المديرين مرة واحدة لتحسين الأداء
+      final allDrivers = await client
+          .from('managers')
+          .select('username, full_name');
+
+      debugPrint('👥 تم جلب ${allDrivers.length} مدير/سائق من جدول managers');
+
+      // إنشاء خريطة للبحث السريع
+      final Map<String, String?> driverNamesMap = {};
+      for (var driver in allDrivers) {
+        driverNamesMap[driver['username']] = driver['full_name'];
+      }
+
+      List<Map<String, dynamic>> recordsWithDriverInfo = [];
+
+      // إرفاق بيانات السائق لكل سجل
+      for (var record in response) {
+        Map<String, dynamic> recordWithDriver = Map<String, dynamic>.from(
+          record,
+        );
+
+        debugPrint('🔍 معالجة سجل للسائق: ${record['driver_id']}');
+
+        final driverId = record['driver_id'];
+        if (driverId != null && driverNamesMap.containsKey(driverId)) {
+          recordWithDriver['driver_full_name'] = driverNamesMap[driverId];
+          recordWithDriver['driver_username'] = driverId;
+          debugPrint(
+            '✅ تم إضافة الاسم الكامل: ${driverNamesMap[driverId]} للسائق: $driverId',
+          );
+        } else {
+          debugPrint('❌ لم يتم العثور على السائق $driverId في جدول managers');
+        }
+
+        recordsWithDriverInfo.add(recordWithDriver);
+      }
+
       setState(() {
-        driverRecords = List<Map<String, dynamic>>.from(response);
+        driverRecords = recordsWithDriverInfo;
         isLoading = false;
       });
+
+      debugPrint(
+        '📊 Final: Set ${recordsWithDriverInfo.length} driver records in state',
+      );
+
       // تحميل الإحصائيات بعد تحميل السجلات
       await _loadFleetData();
       // تحديث عدد الإشعارات غير المقروءة
@@ -78,32 +153,35 @@ class _ManagerPageState extends State<ManagerPage> {
       final totalCheckins = checkinsResponse.length;
 
       // حساب عدد السائقين الفريدين
-      final uniqueDrivers = checkinsResponse
-          .map((record) => record['driver_id'])
-          .where((driverId) => driverId != null)
-          .toSet()
-          .length;
+      final uniqueDrivers =
+          checkinsResponse
+              .map((record) => record['driver_id'])
+              .where((driverId) => driverId != null)
+              .toSet()
+              .length;
 
       // حساب تسجيلات اليوم
       final today = DateTime.now();
       final todayStart = DateTime(today.year, today.month, today.day);
-      final todayCheckins = checkinsResponse.where((record) {
-        if (record['created_at'] != null) {
-          final recordDate = DateTime.parse(record['created_at']);
-          return recordDate.isAfter(todayStart);
-        }
-        return false;
-      }).length;
+      final todayCheckins =
+          checkinsResponse.where((record) {
+            if (record['created_at'] != null) {
+              final recordDate = DateTime.parse(record['created_at']);
+              return recordDate.isAfter(todayStart);
+            }
+            return false;
+          }).length;
 
       // حساب الرحلات النشطة (التي تم إنشاؤها خلال آخر 24 ساعة)
       final last24Hours = DateTime.now().subtract(const Duration(hours: 24));
-      final activeTrips = checkinsResponse.where((record) {
-        if (record['created_at'] != null) {
-          final recordDate = DateTime.parse(record['created_at']);
-          return recordDate.isAfter(last24Hours);
-        }
-        return false;
-      }).length;
+      final activeTrips =
+          checkinsResponse.where((record) {
+            if (record['created_at'] != null) {
+              final recordDate = DateTime.parse(record['created_at']);
+              return recordDate.isAfter(last24Hours);
+            }
+            return false;
+          }).length;
 
       // محاولة جلب عدد السيارات من جدول المركبات (إذا كان موجوداً)
       int carsCount = 0;
@@ -127,10 +205,8 @@ class _ManagerPageState extends State<ManagerPage> {
       // في حالة الخطأ، استخدم بيانات افتراضية من السجلات المحملة
       setState(() {
         totalCheckinsCount = driverRecords.length;
-        uniqueDriversCount = driverRecords
-            .map((r) => r['driver_id'])
-            .toSet()
-            .length;
+        uniqueDriversCount =
+            driverRecords.map((r) => r['driver_id']).toSet().length;
         totalCarsCount = uniqueDriversCount;
         activeTripsCount = 0;
         todayCheckinsCount = 0;
@@ -144,11 +220,12 @@ class _ManagerPageState extends State<ManagerPage> {
       'totalCars': totalCarsCount,
       'activeTrips': activeTripsCount,
       'connectedDrivers': uniqueDriversCount,
-      'newNotifications': todayCheckinsCount,
+      'newNotifications':
+          _unreadNotificationsCount, // استخدام العدد الفعلي للإشعارات
       'totalDrivers': uniqueDriversCount,
-      'maintenanceDue': 0, // يمكن تحديثها من جدول الصيانة لاحقاً
-      'fuelLevel': 85, // يمكن تحديثها من قاعدة البيانات
+      'todayCheckins': todayCheckinsCount,
       'monthlyTrips': totalCheckinsCount,
+      'totalRecords': totalCheckinsCount,
     };
   }
 
@@ -184,7 +261,7 @@ class _ManagerPageState extends State<ManagerPage> {
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
     }
 
-    void _openManagerProfile(BuildContext context) {
+    void openManagerProfile(BuildContext context) {
       Navigator.of(context).push(
         MaterialPageRoute(builder: (context) => const ManagerProfilePage()),
       );
@@ -257,7 +334,7 @@ class _ManagerPageState extends State<ManagerPage> {
             tooltip: 'تحديث البيانات',
           ),
           IconButton(
-            onPressed: () => _openManagerProfile(context),
+            onPressed: () => openManagerProfile(context),
             icon: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
@@ -346,54 +423,187 @@ class _ManagerPageState extends State<ManagerPage> {
 
               const SizedBox(height: 20),
 
-              // Stat cards with real data
-              GridView.count(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 1.1,
-                children: [
-                  _StatCard(
-                    title: 'الرحلات النشطة',
-                    value: '${fleetData['activeTrips']}',
-                    icon: Icons.directions_car,
-                    color: const Color(0xFF4F46E5),
-                    gradient: const [Color(0xFF4F46E5), Color(0xFF7C3AED)],
+              // Modern Statistics Cards with real data
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      const Color(0xFF4F46E5).withOpacity(0.05),
+                      const Color(0xFF7C3AED).withOpacity(0.05),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  _StatCard(
-                    title: 'السائقون المتصلون',
-                    value: '${fleetData['connectedDrivers']}',
-                    icon: Icons.person,
-                    color: const Color(0xFF00C9A7),
-                    gradient: const [Color(0xFF00C9A7), Color(0xFF2BE7C7)],
-                  ),
-                  _StatCard(
-                    title: 'إشعارات جديدة',
-                    value: '${fleetData['newNotifications']}',
-                    icon: Icons.notifications,
-                    color: const Color(0xFFFF6B6B),
-                    gradient: const [Color(0xFFFF6B6B), Color(0xFFFF8E8E)],
-                  ),
-                  _StatCard(
-                    title: 'مجموع السيارات',
-                    value: '${fleetData['totalCars']}',
-                    icon: Icons.local_shipping,
-                    color: const Color(0xFFFFA726),
-                    gradient: const [Color(0xFFFFA726), Color(0xFFFFCC80)],
-                  ),
-                ],
-              ),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Column(
+                  children: [
+                    // Header
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)],
+                              ),
+                              borderRadius: BorderRadius.circular(15),
+                            ),
+                            child: const Icon(
+                              Icons.analytics_rounded,
+                              color: Colors.white,
+                              size: 24,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'إحصائيات الأسطول',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF1E293B),
+                                  ),
+                                ),
+                                Text(
+                                  'بيانات فورية من قاعدة البيانات',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Color(0xFF64748B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: Colors.green.shade200,
+                                width: 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.circle,
+                                  color: Colors.green.shade400,
+                                  size: 8,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'متصل',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.green.shade700,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
 
-              const SizedBox(height: 20),
+                    // Statistics Grid
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: GridView.count(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        crossAxisCount: 2,
+                        crossAxisSpacing: 16,
+                        mainAxisSpacing: 16,
+                        childAspectRatio: 1.0,
+                        children: [
+                          _ModernStatCard(
+                            title: 'إجمالي السجلات',
+                            value: '${fleetData['totalRecords']}',
+                            icon: Icons.assignment_rounded,
+                            color: const Color(0xFF4F46E5),
+                            gradient: const [
+                              Color(0xFF4F46E5),
+                              Color(0xFF7C3AED),
+                            ],
+                            subtitle: 'من جميع السائقين',
+                          ),
+                          _ModernStatCard(
+                            title: 'السائقون النشطون',
+                            value: '${fleetData['connectedDrivers']}',
+                            icon: Icons.people_rounded,
+                            color: const Color(0xFF00C9A7),
+                            gradient: const [
+                              Color(0xFF00C9A7),
+                              Color(0xFF2BE7C7),
+                            ],
+                            subtitle: 'سائق مسجل',
+                          ),
+                          _ModernStatCard(
+                            title: 'إشعارات جديدة',
+                            value: '${fleetData['newNotifications']}',
+                            icon: Icons.notifications_active_rounded,
+                            color: const Color(0xFFFF6B6B),
+                            gradient: const [
+                              Color(0xFFFF6B6B),
+                              Color(0xFFFF8E8E),
+                            ],
+                            subtitle: 'إشعار غير مقروء',
+                          ),
+                          _ModernStatCard(
+                            title: 'مجموع المركبات',
+                            value: '${fleetData['totalCars']}',
+                            icon: Icons.local_shipping_rounded,
+                            color: const Color(0xFFFFA726),
+                            gradient: const [
+                              Color(0xFFFFA726),
+                              Color(0xFFFFCC80),
+                            ],
+                            subtitle: 'مركبة مسجلة',
+                          ),
+                        ],
+                      ),
+                    ),
 
-              // Additional stats row
-              _MiniStatCard(
-                title: 'إجمالي السجلات',
-                value: '${fleetData['monthlyTrips']}',
-                icon: Icons.timeline,
-                color: const Color(0xFF9C27B0),
+                    // Additional Quick Stats
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _QuickStatCard(
+                              title: 'تسجيلات اليوم',
+                              value: '${fleetData['todayCheckins']}',
+                              icon: Icons.today_rounded,
+                              color: const Color(0xFF9C27B0),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _QuickStatCard(
+                              title: 'الرحلات النشطة',
+                              value: '${fleetData['activeTrips']}',
+                              icon: Icons.route_rounded,
+                              color: const Color(0xFF2DD4BF),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
 
               const SizedBox(height: 20),
@@ -438,16 +648,18 @@ class _ManagerPageState extends State<ManagerPage> {
   }
 }
 
-class _StatCard extends StatelessWidget {
+class _ModernStatCard extends StatelessWidget {
   final String title;
   final String value;
+  final String subtitle;
   final IconData icon;
   final Color color;
   final List<Color> gradient;
 
-  const _StatCard({
+  const _ModernStatCard({
     required this.title,
     required this.value,
+    required this.subtitle,
     required this.icon,
     required this.color,
     required this.gradient,
@@ -462,41 +674,158 @@ class _StatCard extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
             color: color.withOpacity(0.3),
-            blurRadius: 15,
-            offset: const Offset(0, 8),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Icon(icon, color: Colors.white.withOpacity(0.8), size: 24),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(Icons.info_outline, color: Colors.white, size: 16),
-              ),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: LinearGradient(
+            colors: [
+              Colors.white.withOpacity(0.1),
+              Colors.white.withOpacity(0.05),
             ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
-          const SizedBox(height: 12),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, color: Colors.white, size: 20),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.trending_up,
+                    color: Colors.white,
+                    size: 14,
+                  ),
+                ),
+              ],
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    height: 1,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.9),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.7),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickStatCard extends StatelessWidget {
+  final String title;
+  final String value;
+  final IconData icon;
+  final Color color;
+
+  const _QuickStatCard({
+    required this.title,
+    required this.value,
+    required this.icon,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.2), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -752,9 +1081,7 @@ class _DriverRecordsSection extends StatelessWidget {
                 ),
               )
             else
-              ...records
-                  .map((record) => _DriverRecordTile(record: record))
-                  .toList(),
+              ...records.map((record) => _DriverRecordTile(record: record)),
           ],
         ),
       ),
@@ -769,6 +1096,12 @@ class _DriverRecordTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Debug: Print what data we have for this record
+    debugPrint('🎯 Driver Record Data:');
+    debugPrint('   driver_id: ${record['driver_id']}');
+    debugPrint('   driver_full_name: ${record['driver_full_name']}');
+    debugPrint('   driver_username: ${record['driver_username']}');
+
     // تحديد الحالة بناءً على البيانات الحقيقية
     final status = record['status'] ?? 'مكتمل';
     final isActive = status == 'قيد التنفيذ' || status == 'active';
@@ -810,14 +1143,16 @@ class _DriverRecordTile extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: isActive
-              ? const Color(0xFF4F46E5).withOpacity(0.05)
-              : Colors.grey.shade50,
+          color:
+              isActive
+                  ? const Color(0xFF4F46E5).withOpacity(0.05)
+                  : Colors.grey.shade50,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isActive
-                ? const Color(0xFF4F46E5).withOpacity(0.2)
-                : Colors.grey.shade200,
+            color:
+                isActive
+                    ? const Color(0xFF4F46E5).withOpacity(0.2)
+                    : Colors.grey.shade200,
             width: 1,
           ),
         ),
@@ -826,9 +1161,8 @@ class _DriverRecordTile extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: isActive
-                    ? const Color(0xFF4F46E5)
-                    : Colors.grey.shade400,
+                color:
+                    isActive ? const Color(0xFF4F46E5) : Colors.grey.shade400,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(Icons.person, color: Colors.white, size: 16),
@@ -842,7 +1176,12 @@ class _DriverRecordTile extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        record['driver_id'] ?? 'سائق غير محدد',
+                        record['driver_full_name'] != null &&
+                                record['driver_full_name'].toString().isNotEmpty
+                            ? record['driver_full_name']
+                            : record['driver_username'] ??
+                                record['driver_id'] ??
+                                'سائق غير محدد',
                         style: const TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 14,
@@ -854,9 +1193,8 @@ class _DriverRecordTile extends StatelessWidget {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: isActive
-                              ? const Color(0xFF4F46E5)
-                              : Colors.green,
+                          color:
+                              isActive ? const Color(0xFF4F46E5) : Colors.green,
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(

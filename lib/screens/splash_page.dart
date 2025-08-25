@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../bloc/auth_bloc.dart' as auth_bloc;
 import 'welcome_page.dart';
+import 'manager_page.dart';
+import 'driver_page.dart';
 
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
@@ -48,12 +51,11 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
     _mainController.forward();
     _pulseController.repeat(reverse: true);
 
-    // الانتقال إلى صفحة الترحيب بعد 3.5 ثانية
-    Timer(const Duration(milliseconds: 3500), () {
+    // Check authentication status after animation
+    Timer(const Duration(milliseconds: 2500), () {
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const WelcomePage()),
-        );
+        // Trigger authentication check through AuthBloc
+        context.read<auth_bloc.AuthBloc>().add(auth_bloc.CheckAuthStatus());
       }
     });
   }
@@ -67,90 +69,120 @@ class _SplashPageState extends State<SplashPage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: Center(
-        child: AnimatedBuilder(
-          animation: Listenable.merge([_mainController, _pulseController]),
-          builder: (context, child) {
-            return Transform.scale(
-              scale: _scaleAnimation.value * _pulseAnimation.value,
-              child: Opacity(
-                opacity: _fadeAnimation.value,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // Logo
-                    Container(
-                      width: 120,
-                      height: 120,
-                      decoration: BoxDecoration(
-                        color: Colors.blue.shade50,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.blue.withOpacity(0.3),
-                            blurRadius: 20,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: Image.asset(
-                          'assets/logo.png',
-                          width: 80,
-                          fit: BoxFit.contain,
-                          errorBuilder: (context, error, stackTrace) {
-                            return Icon(
-                              Icons.directions_car,
-                              size: 80,
-                              color: Colors.blue.shade600,
-                            );
-                          },
-                        ),
-                      ),
+    return BlocListener<auth_bloc.AuthBloc, auth_bloc.AuthState>(
+      listener: (context, state) {
+        if (state is auth_bloc.AuthAuthenticated) {
+          // Navigate based on user role
+          if (state.user.role == 'driver') {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder:
+                    (_) => DriverPage(
+                      userInfo: {
+                        'id': state.user.id,
+                        'username': state.user.username,
+                        'full_name': state.user.fullName,
+                        'role': state.user.role,
+                      },
                     ),
-                    const SizedBox(height: 30),
-
-                    // App Name
-                    Text(
-                      'FleetTracker',
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue.shade700,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-
-                    // Tagline
-                    Text(
-                      'نظام إدارة وتتبع السيارات',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                    const SizedBox(height: 40),
-
-                    // Loading Indicator
-                    SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 3,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          Colors.blue.shade400,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
               ),
             );
-          },
+          } else {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => const ManagerPage()),
+            );
+          }
+        } else if (state is auth_bloc.AuthUnauthenticated) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const WelcomePage()),
+          );
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(
+          child: AnimatedBuilder(
+            animation: Listenable.merge([_mainController, _pulseController]),
+            builder: (context, child) {
+              return Transform.scale(
+                scale: _scaleAnimation.value * _pulseAnimation.value,
+                child: Opacity(
+                  opacity: _fadeAnimation.value,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Logo
+                      Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade50,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.blue.withOpacity(0.3),
+                              blurRadius: 20,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Image.asset(
+                            'assets/logo.png',
+                            width: 80,
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Icon(
+                                Icons.directions_car,
+                                size: 80,
+                                color: Colors.blue.shade600,
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 30),
+
+                      // App Name
+                      Text(
+                        'FleetTracker',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue.shade700,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+
+                      // Tagline
+                      Text(
+                        'نظام إدارة وتتبع السيارات',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                      const SizedBox(height: 40),
+
+                      // Loading Indicator
+                      SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.blue.shade400,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
         ),
       ),
     );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:io';
 
 class CheckinDetailsPage extends StatefulWidget {
@@ -19,7 +20,7 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
 
-  bool _isLoadingImages = false;
+  final bool _isLoadingImages = false;
   String? _imageError;
   Map<String, dynamic>? _driverInfo;
   bool _loadingDriverInfo = false;
@@ -65,11 +66,12 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
 
       if (driverId != null) {
         // جلب بيانات السائق من جدول managers
-        final response = await client
-            .from('managers')
-            .select('id, username, full_name, role')
-            .eq('id', driverId)
-            .maybeSingle();
+        final response =
+            await client
+                .from('managers')
+                .select('id, username, full_name, role')
+                .eq('id', driverId)
+                .maybeSingle();
 
         if (response != null) {
           setState(() {
@@ -84,79 +86,133 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
     }
   }
 
+  Future<void> _openGoogleMaps() async {
+    try {
+      // الحصول على إحداثيات الموقع
+      String? lat, lon;
+
+      if (widget.checkinData['lat'] != null &&
+          widget.checkinData['lon'] != null) {
+        lat = widget.checkinData['lat'].toString();
+        lon = widget.checkinData['lon'].toString();
+      } else if (widget.checkinData['latitude'] != null &&
+          widget.checkinData['longitude'] != null) {
+        lat = widget.checkinData['latitude'].toString();
+        lon = widget.checkinData['longitude'].toString();
+      }
+
+      if (lat != null && lon != null && lat != 'null' && lon != 'null') {
+        // إنشاء رابط Google Maps
+        final url = 'https://www.google.com/maps?q=$lat,$lon';
+
+        debugPrint('🗺️ فتح Google Maps للموقع: $lat, $lon');
+
+        if (await canLaunchUrl(Uri.parse(url))) {
+          await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+        } else {
+          _showSnackBar('لا يمكن فتح Google Maps', isError: true);
+        }
+      } else {
+        _showSnackBar('إحداثيات الموقع غير متوفرة', isError: true);
+      }
+    } catch (e) {
+      debugPrint('خطأ في فتح Google Maps: $e');
+      _showSnackBar('حدث خطأ أثناء فتح الخريطة', isError: true);
+    }
+  }
+
+  void _showSnackBar(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: GoogleFonts.cairo()),
+        backgroundColor: isError ? Colors.red.shade600 : Colors.green.shade600,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
   void _showFullScreenImage(String imageUrl, String title) {
     showDialog(
       context: context,
       barrierDismissible: true,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.black,
-        insetPadding: EdgeInsets.zero,
-        child: Stack(
-          children: [
-            Center(
-              child: InteractiveViewer(
-                child: Image.network(
-                  imageUrl,
-                  fit: BoxFit.contain,
-                  errorBuilder: (context, error, stackTrace) {
-                    return const Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.broken_image,
-                          color: Colors.white,
-                          size: 100,
-                        ),
-                        SizedBox(height: 16),
-                        Text(
-                          'فشل في تحميل الصورة',
-                          style: TextStyle(color: Colors.white, fontSize: 16),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ),
-            ),
-            Positioned(
-              top: 50,
-              right: 20,
-              child: GestureDetector(
-                onTap: () => Navigator.of(context).pop(),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.7),
-                    borderRadius: BorderRadius.circular(25),
-                  ),
-                  child: const Icon(Icons.close, color: Colors.white, size: 24),
-                ),
-              ),
-            ),
-            Positioned(
-              bottom: 50,
-              left: 20,
-              right: 20,
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.7),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.cairo(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
+      builder:
+          (context) => Dialog(
+            backgroundColor: Colors.black,
+            insetPadding: EdgeInsets.zero,
+            child: Stack(
+              children: [
+                Center(
+                  child: InteractiveViewer(
+                    child: Image.network(
+                      imageUrl,
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.broken_image,
+                              color: Colors.white,
+                              size: 100,
+                            ),
+                            SizedBox(height: 16),
+                            Text(
+                              'فشل في تحميل الصورة',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
                   ),
                 ),
-              ),
+                Positioned(
+                  top: 50,
+                  right: 20,
+                  child: GestureDetector(
+                    onTap: () => Navigator.of(context).pop(),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.7),
+                        borderRadius: BorderRadius.circular(25),
+                      ),
+                      child: const Icon(
+                        Icons.close,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  bottom: 50,
+                  left: 20,
+                  right: 20,
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.7),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      title,
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.cairo(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
     );
   }
 
@@ -253,122 +309,125 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
               ),
             ],
           ),
-          child: imageUrl != null && imageUrl.isNotEmpty
-              ? GestureDetector(
-                  onTap: () => _showFullScreenImage(imageUrl, title),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: Stack(
-                      children: [
-                        Image.network(
-                          imageUrl,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                          loadingBuilder: (context, child, loadingProgress) {
-                            if (loadingProgress == null) return child;
-                            return Center(
-                              child: CircularProgressIndicator(
-                                value:
-                                    loadingProgress.expectedTotalBytes != null
-                                    ? loadingProgress.cumulativeBytesLoaded /
-                                          loadingProgress.expectedTotalBytes!
-                                    : null,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Colors.blue.shade600,
-                                ),
-                              ),
-                            );
-                          },
-                          errorBuilder: (context, error, stackTrace) {
-                            return Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.error_outline,
-                                  size: 48,
-                                  color: Colors.red.shade400,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'خطأ في تحميل الصورة',
-                                  style: TextStyle(
-                                    color: Colors.red.shade600,
-                                    fontSize: 14,
+          child:
+              imageUrl != null && imageUrl.isNotEmpty
+                  ? GestureDetector(
+                    onTap: () => _showFullScreenImage(imageUrl, title),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: Stack(
+                        children: [
+                          Image.network(
+                            imageUrl,
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            height: double.infinity,
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return Center(
+                                child: CircularProgressIndicator(
+                                  value:
+                                      loadingProgress.expectedTotalBytes != null
+                                          ? loadingProgress
+                                                  .cumulativeBytesLoaded /
+                                              loadingProgress
+                                                  .expectedTotalBytes!
+                                          : null,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.blue.shade600,
                                   ),
                                 ),
-                                const SizedBox(height: 8),
-                                ElevatedButton.icon(
-                                  onPressed: () {
-                                    setState(() {});
-                                  },
-                                  icon: const Icon(Icons.refresh, size: 16),
-                                  label: const Text('إعادة المحاولة'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.red.shade600,
-                                    foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
+                              );
+                            },
+                            errorBuilder: (context, error, stackTrace) {
+                              return Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.error_outline,
+                                    size: 48,
+                                    color: Colors.red.shade400,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'خطأ في تحميل الصورة',
+                                    style: TextStyle(
+                                      color: Colors.red.shade600,
+                                      fontSize: 14,
                                     ),
                                   ),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                        // إضافة مؤشر للنقر
-                        Positioned(
-                          top: 8,
-                          left: 8,
-                          child: Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withOpacity(0.6),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(
-                                  Icons.zoom_in,
-                                  color: Colors.white,
-                                  size: 16,
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'اضغط للتكبير',
-                                  style: GoogleFonts.cairo(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w500,
+                                  const SizedBox(height: 8),
+                                  ElevatedButton.icon(
+                                    onPressed: () {
+                                      setState(() {});
+                                    },
+                                    icon: const Icon(Icons.refresh, size: 16),
+                                    label: const Text('إعادة المحاولة'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.red.shade600,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              );
+                            },
+                          ),
+                          // إضافة مؤشر للنقر
+                          Positioned(
+                            top: 8,
+                            left: 8,
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.6),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.zoom_in,
+                                    color: Colors.white,
+                                    size: 16,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'اضغط للتكبير',
+                                    style: GoogleFonts.cairo(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.image_not_supported,
-                      size: 48,
-                      color: Colors.grey.shade400,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      placeholder,
-                      style: TextStyle(
-                        color: Colors.grey.shade600,
-                        fontSize: 14,
+                        ],
                       ),
                     ),
-                  ],
-                ),
+                  )
+                  : Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.image_not_supported,
+                        size: 48,
+                        color: Colors.grey.shade400,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        placeholder,
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
         ),
       ],
     );
@@ -470,6 +529,10 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
               ],
             ),
           ),
+
+          // زر فتح Google Maps
+          const SizedBox(height: 16),
+          _buildGoogleMapsButton(),
         ],
       ),
     );
@@ -495,6 +558,58 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildGoogleMapsButton() {
+    // تحقق من وجود إحداثيات الموقع
+    bool hasCoordinates = false;
+
+    if ((widget.checkinData['lat'] != null &&
+            widget.checkinData['lon'] != null) ||
+        (widget.checkinData['latitude'] != null &&
+            widget.checkinData['longitude'] != null)) {
+      final lat =
+          widget.checkinData['lat']?.toString() ??
+          widget.checkinData['latitude']?.toString();
+      final lon =
+          widget.checkinData['lon']?.toString() ??
+          widget.checkinData['longitude']?.toString();
+
+      if (lat != null &&
+          lon != null &&
+          lat != 'null' &&
+          lon != 'null' &&
+          lat.isNotEmpty &&
+          lon.isNotEmpty) {
+        hasCoordinates = true;
+      }
+    }
+
+    if (!hasCoordinates) {
+      return const SizedBox.shrink(); // لا يظهر الزر إذا لم توجد إحداثيات
+    }
+
+    return Container(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: _openGoogleMaps,
+        icon: Icon(Icons.map, size: 20),
+        label: Text(
+          'فتح في Google Maps',
+          style: GoogleFonts.cairo(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.blue.shade600,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 2,
+          shadowColor: Colors.blue.withOpacity(0.3),
+        ),
+      ),
     );
   }
 
@@ -577,8 +692,8 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
                           'آخر تحديث',
                           widget.checkinData['updated_at'] != null
                               ? DateTime.parse(
-                                  widget.checkinData['updated_at'],
-                                ).toLocal().toString().split('.').first
+                                widget.checkinData['updated_at'],
+                              ).toLocal().toString().split('.').first
                               : 'N/A',
                           Icons.update,
                           Colors.purple,

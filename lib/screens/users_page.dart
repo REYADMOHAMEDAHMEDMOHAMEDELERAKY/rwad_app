@@ -49,26 +49,19 @@ class _UsersPageState extends State<UsersPage> {
       debugPrint('Raw cars response type: ${response.runtimeType}');
       debugPrint('Raw cars response: $response');
 
-      if (response != null) {
-        setState(() {
-          _availableCars = List<Map<String, dynamic>>.from(response as List);
-        });
-        debugPrint('Successfully loaded ${_availableCars.length} cars');
+      setState(() {
+        _availableCars = List<Map<String, dynamic>>.from(response as List);
+      });
+      debugPrint('Successfully loaded ${_availableCars.length} cars');
 
-        // Print each car for debugging
-        for (int i = 0; i < _availableCars.length; i++) {
-          final car = _availableCars[i];
-          debugPrint(
-            'Car $i: ID=${car['id']}, Plate=${car['plate']}, Model=${car['model']}, Notes=${car['notes']}',
-          );
-        }
-      } else {
-        debugPrint('No cars response received (response is null)');
-        setState(() {
-          _availableCars = [];
-        });
+      // Print each car for debugging
+      for (int i = 0; i < _availableCars.length; i++) {
+        final car = _availableCars[i];
+        debugPrint(
+          'Car $i: ID=${car['id']}, Plate=${car['plate']}, Model=${car['model']}, Notes=${car['notes']}',
+        );
       }
-    } catch (e) {
+        } catch (e) {
       debugPrint('Error loading cars: $e');
       debugPrintStack();
       // Set empty list on error
@@ -102,7 +95,7 @@ class _UsersPageState extends State<UsersPage> {
           .select('id,username,role,created_at,is_suspended,full_name,phone')
           .order('id', ascending: true);
 
-      if (res != null && res.isNotEmpty) {
+      if (res.isNotEmpty) {
         _users = List<Map<String, dynamic>>.from(res as List);
       } else {
         // إضافة بيانات تجريبية إذا كانت القائمة فارغة
@@ -924,7 +917,7 @@ class _StyledDropdown extends StatelessWidget {
         border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
       ),
       child: DropdownButtonFormField<String>(
-        value: value,
+        initialValue: value,
         items: items,
         onChanged: onChanged,
         style: GoogleFonts.cairo(color: const Color(0xFF1E293B), fontSize: 14),
@@ -1248,7 +1241,7 @@ class _CarSelectionDropdown extends StatelessWidget {
               : Padding(
                   padding: const EdgeInsets.all(8.0),
                   child: DropdownButtonFormField<String>(
-                    value: selectedCarId,
+                    initialValue: selectedCarId,
                     isExpanded: true,
                     decoration: InputDecoration(
                       border: InputBorder.none,
@@ -1285,7 +1278,7 @@ class _CarSelectionDropdown extends StatelessWidget {
                       }
                       // Ensure text never exceeds reasonable length
                       if (text.length > 35) {
-                        text = text.substring(0, 32) + '...';
+                        text = '${text.substring(0, 32)}...';
                       }
 
                       return DropdownMenuItem<String>(
@@ -1350,7 +1343,7 @@ class _CarSelectionDropdown extends StatelessWidget {
                             final model = selectedCar['model'] ?? '';
                             final displayText =
                                 plate + (model.isNotEmpty ? ' - $model' : '');
-                            return Container(
+                            return SizedBox(
                               width: double.infinity,
                               child: Text(
                                 displayText,

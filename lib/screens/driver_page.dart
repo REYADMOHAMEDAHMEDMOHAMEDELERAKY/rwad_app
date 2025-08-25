@@ -1057,7 +1057,7 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
                               ),
                             ),
                             Text(
-                              '${_currentPosition?.longitude.toStringAsFixed(6) ?? 'N/A'}',
+                              _currentPosition?.longitude.toStringAsFixed(6) ?? 'N/A',
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
@@ -1101,7 +1101,7 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
                               ),
                             ),
                             Text(
-                              '${_currentPosition?.longitude.toStringAsFixed(6) ?? 'N/A'}',
+                              _currentPosition?.longitude.toStringAsFixed(6) ?? 'N/A',
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,

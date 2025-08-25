@@ -34,12 +34,10 @@ class _ManagerProfilePageState extends State<ManagerProfilePage> {
           .eq('username', 'alaa') // افتراضياً نقرأ بيانات alaa
           .single();
 
-      if (res != null) {
-        setState(() {
-          managerData = Map<String, dynamic>.from(res);
-        });
-      }
-    } catch (e) {
+      setState(() {
+        managerData = Map<String, dynamic>.from(res);
+      });
+        } catch (e) {
       debugPrint('loadManagerData error: $e');
       // استخدام بيانات افتراضية في حالة الخطأ
       managerData = {

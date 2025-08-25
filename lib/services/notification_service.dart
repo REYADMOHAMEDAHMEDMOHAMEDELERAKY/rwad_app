@@ -16,21 +16,23 @@ class NotificationService {
       print('Driver: $driverName, Serial: $checkinSerial, Location: $location');
 
       final title = 'تسجيل جديد من السائق';
-      final message = location != null
-          ? 'سجل السائق $driverName تسجيل جديد رقم $checkinSerial في موقع: $location'
-          : 'سجل السائق $driverName تسجيل جديد رقم $checkinSerial';
+      final message =
+          location != null
+              ? 'سجل السائق $driverName تسجيل جديد رقم $checkinSerial في موقع: $location'
+              : 'سجل السائق $driverName تسجيل جديد رقم $checkinSerial';
 
       // محاولة إدراج الإشعار
-      final result = await _client.from('notifications').insert({
-        'title': title,
-        'message': message,
-        'type': 'checkin',
-        'recipient_role': 'admin', // إرسال لجميع المديرين
-        'sender_id': driverId,
-        'sender_name': driverName,
-        'checkin_id': checkinId,
-        'checkin_serial': checkinSerial,
-      }).select();
+      final result =
+          await _client.from('notifications').insert({
+            'title': title,
+            'message': message,
+            'type': 'checkin',
+            'recipient_role': 'admin', // إرسال لجميع المديرين
+            'sender_id': driverId,
+            'sender_name': driverName,
+            'checkin_id': checkinId,
+            'checkin_serial': checkinSerial,
+          }).select();
 
       print('✅ تم إرسال إشعار بنجاح: $title');
       print('📄 Result: $result');
@@ -51,9 +53,10 @@ class NotificationService {
         try {
           await _client.from('notifications').insert({
             'title': 'تسجيل جديد من السائق',
-            'message': location != null
-                ? 'سجل السائق $driverName تسجيل جديد رقم $checkinSerial في موقع: $location'
-                : 'سجل السائق $driverName تسجيل جديد رقم $checkinSerial',
+            'message':
+                location != null
+                    ? 'سجل السائق $driverName تسجيل جديد رقم $checkinSerial في موقع: $location'
+                    : 'سجل السائق $driverName تسجيل جديد رقم $checkinSerial',
             'type': 'checkin',
             'recipient_role': 'admin',
             'sender_id': driverId,
@@ -183,8 +186,9 @@ class NotificationService {
           .from('notifications')
           .update({
             'is_read': true,
-            'read_at': DateTime.now().toIso8601String(),
-            'updated_at': DateTime.now().toIso8601String(),
+            // Note: read_at and updated_at columns will be added later
+            // 'read_at': DateTime.now().toIso8601String(),
+            // 'updated_at': DateTime.now().toIso8601String(),
           })
           .eq('id', notificationId);
 
@@ -201,8 +205,9 @@ class NotificationService {
           .from('notifications')
           .update({
             'is_read': true,
-            'read_at': DateTime.now().toIso8601String(),
-            'updated_at': DateTime.now().toIso8601String(),
+            // Note: read_at and updated_at columns will be added later
+            // 'read_at': DateTime.now().toIso8601String(),
+            // 'updated_at': DateTime.now().toIso8601String(),
           })
           .eq('recipient_role', 'admin')
           .eq('is_read', false);

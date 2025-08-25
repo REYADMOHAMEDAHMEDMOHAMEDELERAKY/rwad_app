@@ -52,33 +52,39 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     try {
       final client = Supabase.instance.client;
 
-      // البحث عن المستخدم في جدول managers
-      final response = await client
-          .from('managers')
-          .select()
-          .eq('username', event.username)
-          .eq('password', event.password)
-          .eq('is_suspended', false)
-          .single();
+      // البحث عن المستخدم في جدول managers (يتضمن المديرين والسائقين)
+      final response =
+          await client
+              .from('managers')
+              .select('id, username, full_name, role, is_suspended')
+              .eq('username', event.username)
+              .eq('password', event.password)
+              .maybeSingle();
 
-      if (response != null) {
-        final user = app_user.User(
-          id: response['id'].toString(),
-          username: response['username'],
-          password: response['password'],
-          fullName: response['full_name'] ?? response['username'],
-          role: response['role'] ?? 'manager',
-        );
-
-        // حفظ بيانات المستخدم محلياً
-        await _saveUserSession(user);
-
-        emit(AuthAuthenticated(user: user));
-      } else {
+      if (response == null) {
         emit(AuthError(message: 'اسم المستخدم أو كلمة المرور غير صحيحة'));
+        return;
       }
+
+      // التحقق من حالة الحساب
+      if (response['is_suspended'] == true) {
+        emit(AuthError(message: 'تم تعليق حسابك. يرجى التواصل مع الإدارة.'));
+        return;
+      }
+
+      final user = app_user.User(
+        id: response['id'].toString(),
+        username: response['username'],
+        fullName: response['full_name'] ?? response['username'],
+        role: response['role'] ?? 'manager',
+      );
+
+      // حفظ بيانات المستخدم محلياً
+      await _saveUserSession(user);
+
+      emit(AuthAuthenticated(user: user));
     } catch (e) {
-      emit(AuthError(message: 'خطأ في تسجيل الدخول: $e'));
+      emit(AuthError(message: 'خطأ في الاتصال. تحقق من اتصالك بالإنترنت.'));
     }
   }
 
