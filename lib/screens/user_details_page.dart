@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class UserDetailsPage extends StatefulWidget {
   final Map<String, dynamic> user;
@@ -13,7 +14,11 @@ class UserDetailsPage extends StatefulWidget {
 class _UserDetailsPageState extends State<UserDetailsPage> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _fullNameController = TextEditingController();
   String _selectedRole = 'driver';
+  String? _selectedCarId;
+  List<Map<String, dynamic>> _availableCars = [];
+  bool _loadingCars = false;
   bool _isSuspended = false;
   bool _loading = false;
   bool _updating = false;
@@ -22,23 +27,73 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
   void initState() {
     super.initState();
     _loadUserData();
+    _loadAvailableCars();
+    _loadUserCar();
   }
 
   @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
+    _fullNameController.dispose();
     super.dispose();
   }
 
   void _loadUserData() {
     _usernameController.text = widget.user['username'] ?? '';
+    _fullNameController.text = widget.user['full_name'] ?? '';
     _selectedRole = widget.user['role'] ?? 'driver';
     _isSuspended = widget.user['is_suspended'] == true;
   }
 
+  Future<void> _loadAvailableCars() async {
+    setState(() => _loadingCars = true);
+    try {
+      final client = Supabase.instance.client;
+      final response = await client
+          .from('cars')
+          .select('id, plate, model, notes')
+          .order('plate', ascending: true);
+
+      if (response != null) {
+        setState(() {
+          _availableCars = List<Map<String, dynamic>>.from(response as List);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading cars: $e');
+      setState(() {
+        _availableCars = [];
+      });
+    } finally {
+      setState(() => _loadingCars = false);
+    }
+  }
+
+  Future<void> _loadUserCar() async {
+    if (_selectedRole != 'driver') return;
+
+    try {
+      final client = Supabase.instance.client;
+      final response = await client
+          .from('car_drivers')
+          .select('car_id')
+          .eq('driver_username', widget.user['username'])
+          .maybeSingle();
+
+      if (response != null && response['car_id'] != null) {
+        setState(() {
+          _selectedCarId = response['car_id'].toString();
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading user car: $e');
+    }
+  }
+
   Future<void> _updateUser() async {
     final username = _usernameController.text.trim();
+    final fullName = _fullNameController.text.trim();
     if (username.isEmpty) return;
 
     setState(() => _updating = true);
@@ -46,6 +101,7 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
       final client = Supabase.instance.client;
       final updateData = {
         'username': username,
+        'full_name': fullName.isNotEmpty ? fullName : null,
         'role': _selectedRole,
         'is_suspended': _isSuspended,
       };
@@ -59,6 +115,29 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
           .from('managers')
           .update(updateData)
           .eq('id', widget.user['id']);
+
+      // Handle car assignment for drivers
+      if (_selectedRole == 'driver') {
+        // First, remove any existing car assignment
+        await client
+            .from('car_drivers')
+            .delete()
+            .eq('driver_username', username);
+
+        // Then, add new car assignment if one is selected
+        if (_selectedCarId != null && _selectedCarId!.isNotEmpty) {
+          await client.from('car_drivers').insert({
+            'car_id': int.parse(_selectedCarId!),
+            'driver_username': username,
+          });
+        }
+      } else {
+        // If changing from driver to admin, remove car assignment
+        await client
+            .from('car_drivers')
+            .delete()
+            .eq('driver_username', username);
+      }
 
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -203,7 +282,7 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
                             widget.user['full_name'] ??
                                 widget.user['username'] ??
                                 '',
-                            style: const TextStyle(
+                            style: GoogleFonts.cairo(
                               color: Colors.white,
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
@@ -212,7 +291,7 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
                           const SizedBox(height: 4),
                           Text(
                             '@${widget.user['username'] ?? ''}',
-                            style: TextStyle(
+                            style: GoogleFonts.cairo(
                               color: Colors.white.withOpacity(0.7),
                               fontSize: 12,
                             ),
@@ -220,7 +299,7 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
                           const SizedBox(height: 4),
                           Text(
                             isAdmin ? 'مدير' : 'سائق',
-                            style: TextStyle(
+                            style: GoogleFonts.cairo(
                               color: Colors.white.withOpacity(0.8),
                               fontSize: 14,
                             ),
@@ -236,9 +315,9 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
                                 color: const Color(0xFFFF6B6B),
                                 borderRadius: BorderRadius.circular(20),
                               ),
-                              child: const Text(
+                              child: Text(
                                 'معلق النشاط',
-                                style: TextStyle(
+                                style: GoogleFonts.cairo(
                                   color: Colors.white,
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
@@ -288,12 +367,12 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
                             ),
                           ),
                           const SizedBox(width: 12),
-                          const Text(
+                          Text(
                             'تعديل بيانات المستخدم',
-                            style: TextStyle(
+                            style: GoogleFonts.cairo(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
-                              color: Color(0xFF1E293B),
+                              color: const Color(0xFF1E293B),
                             ),
                           ),
                         ],
@@ -303,6 +382,12 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
                         controller: _usernameController,
                         label: 'اسم المستخدم',
                         icon: Icons.person_outline,
+                      ),
+                      const SizedBox(height: 16),
+                      _StyledTextField(
+                        controller: _fullNameController,
+                        label: 'الاسم الكامل',
+                        icon: Icons.person,
                       ),
                       const SizedBox(height: 16),
                       _StyledTextField(
@@ -321,10 +406,34 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
                           ),
                           DropdownMenuItem(value: 'admin', child: Text('مدير')),
                         ],
-                        onChanged: (v) =>
-                            setState(() => _selectedRole = v ?? 'driver'),
+                        onChanged: (v) {
+                          setState(() {
+                            _selectedRole = v ?? 'driver';
+                            if (_selectedRole == 'admin') {
+                              _selectedCarId = null;
+                            } else {
+                              _loadUserCar();
+                            }
+                          });
+                        },
                       ),
                       const SizedBox(height: 16),
+
+                      // Car selection dropdown - only visible for drivers
+                      if (_selectedRole == 'driver') ...[
+                        _CarSelectionDropdown(
+                          selectedCarId: _selectedCarId,
+                          availableCars: _availableCars,
+                          isLoading: _loadingCars,
+                          onChanged: (carId) {
+                            setState(() {
+                              _selectedCarId = carId;
+                            });
+                          },
+                          onRefresh: _loadAvailableCars,
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                       _SuspensionToggle(
                         value: _isSuspended,
                         onChanged: (value) =>
@@ -355,9 +464,9 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
                                     ),
                                   ),
                                 )
-                              : const Text(
+                              : Text(
                                   'حفظ التغييرات',
-                                  style: TextStyle(
+                                  style: GoogleFonts.cairo(
                                     fontSize: 16,
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -401,22 +510,22 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
                             ),
                           ),
                           const SizedBox(width: 12),
-                          const Text(
+                          Text(
                             'منطقة الخطر',
-                            style: TextStyle(
+                            style: GoogleFonts.cairo(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
-                              color: Color(0xFFFF6B6B),
+                              color: const Color(0xFFFF6B6B),
                             ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 16),
-                      const Text(
+                      Text(
                         'هذه الإجراءات لا يمكن التراجع عنها. كن حذراً عند استخدامها.',
-                        style: TextStyle(
+                        style: GoogleFonts.cairo(
                           fontSize: 14,
-                          color: Color(0xFF64748B),
+                          color: const Color(0xFF64748B),
                         ),
                       ),
                       const SizedBox(height: 20),
@@ -444,9 +553,9 @@ class _UserDetailsPageState extends State<UserDetailsPage> {
                                     ),
                                   ),
                                 )
-                              : const Text(
+                              : Text(
                                   'حذف المستخدم',
-                                  style: TextStyle(
+                                  style: GoogleFonts.cairo(
                                     fontSize: 16,
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -489,12 +598,16 @@ class _StyledTextField extends StatelessWidget {
       child: TextField(
         controller: controller,
         obscureText: isPassword,
+        style: GoogleFonts.cairo(fontSize: 14, color: const Color(0xFF1E293B)),
         decoration: InputDecoration(
           labelText: label,
           prefixIcon: Icon(icon, color: const Color(0xFF64748B)),
           border: InputBorder.none,
           contentPadding: const EdgeInsets.all(16),
-          labelStyle: const TextStyle(color: Color(0xFF64748B)),
+          labelStyle: GoogleFonts.cairo(
+            color: const Color(0xFF64748B),
+            fontSize: 14,
+          ),
         ),
       ),
     );
@@ -529,7 +642,7 @@ class _StyledDropdown extends StatelessWidget {
           contentPadding: EdgeInsets.all(16),
           prefixIcon: Icon(Icons.security, color: Color(0xFF64748B)),
         ),
-        style: const TextStyle(color: Color(0xFF1E293B)),
+        style: GoogleFonts.cairo(color: const Color(0xFF1E293B), fontSize: 14),
         dropdownColor: Colors.white,
       ),
     );
@@ -566,12 +679,12 @@ class _SuspensionToggle extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'تعليق النشاط',
-                  style: TextStyle(
+                  style: GoogleFonts.cairo(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF1E293B),
+                    color: const Color(0xFF1E293B),
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -579,9 +692,9 @@ class _SuspensionToggle extends StatelessWidget {
                   value
                       ? 'المستخدم معلق ولا يمكنه تسجيل الدخول'
                       : 'المستخدم نشط ويمكنه تسجيل الدخول',
-                  style: const TextStyle(
+                  style: GoogleFonts.cairo(
                     fontSize: 12,
-                    color: Color(0xFF64748B),
+                    color: const Color(0xFF64748B),
                   ),
                 ),
               ],
@@ -595,5 +708,217 @@ class _SuspensionToggle extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _CarSelectionDropdown extends StatelessWidget {
+  final String? selectedCarId;
+  final List<Map<String, dynamic>> availableCars;
+  final bool isLoading;
+  final ValueChanged<String?> onChanged;
+  final VoidCallback onRefresh;
+
+  const _CarSelectionDropdown({
+    required this.selectedCarId,
+    required this.availableCars,
+    required this.isLoading,
+    required this.onChanged,
+    required this.onRefresh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFF),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Row(
+              children: [
+                const Icon(Icons.directions_car, color: Color(0xFF64748B)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'اختيار المركبة',
+                    style: GoogleFonts.cairo(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: const Color(0xFF64748B),
+                    ),
+                  ),
+                ),
+                if (isLoading)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Color(0xFF4F46E5),
+                      ),
+                    ),
+                  )
+                else
+                  IconButton(
+                    onPressed: onRefresh,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    color: const Color(0xFF64748B),
+                  ),
+              ],
+            ),
+          ),
+          if (isLoading)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: Text('جاري تحميل المركبات...')),
+            )
+          else if (availableCars.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Text(
+                    'لا توجد مركبات متاحة',
+                    style: GoogleFonts.cairo(
+                      fontSize: 14,
+                      color: const Color(0xFF64748B),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: onRefresh,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: Text(
+                      'إعادة المحاولة',
+                      style: GoogleFonts.cairo(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: DropdownButtonFormField<String>(
+                value: selectedCarId,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                ),
+                style: GoogleFonts.cairo(
+                  color: const Color(0xFF1E293B),
+                  fontSize: 14,
+                ),
+                dropdownColor: Colors.white,
+                hint: Text(
+                  'اختر مركبة...',
+                  style: GoogleFonts.cairo(
+                    color: const Color(0xFF64748B),
+                    fontSize: 14,
+                  ),
+                ),
+                items: [
+                  DropdownMenuItem<String>(
+                    value: null,
+                    child: Text(
+                      'لا توجد مركبة مخصصة',
+                      style: GoogleFonts.cairo(
+                        fontSize: 14,
+                        color: const Color(0xFF64748B),
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+                  ...availableCars.map((car) {
+                    final plate = car['plate'] ?? '';
+                    final model = car['model'] ?? '';
+                    final notes = car['notes'] ?? '';
+
+                    String displayText = plate;
+                    if (model.isNotEmpty) {
+                      displayText += ' - $model';
+                    }
+                    if (notes.isNotEmpty && displayText.length < 30) {
+                      displayText += ' ($notes)';
+                    }
+
+                    return DropdownMenuItem<String>(
+                      value: car['id'].toString(),
+                      child: Text(
+                        displayText,
+                        style: GoogleFonts.cairo(fontSize: 14),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    );
+                  }).toList(),
+                ],
+                onChanged: onChanged,
+              ),
+            ),
+
+          // Selected car confirmation
+          if (selectedCarId != null && selectedCarId!.isNotEmpty) ...[
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00C9A7).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: const Color(0xFF00C9A7).withOpacity(0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.check_circle,
+                    color: Color(0xFF00C9A7),
+                    size: 16,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'تم اختيار المركبة: ${_getSelectedCarDisplay()}',
+                      style: GoogleFonts.cairo(
+                        fontSize: 12,
+                        color: const Color(0xFF00C9A7),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _getSelectedCarDisplay() {
+    if (selectedCarId == null || availableCars.isEmpty) return '';
+
+    final selectedCar = availableCars.firstWhere(
+      (car) => car['id'].toString() == selectedCarId,
+      orElse: () => {},
+    );
+
+    if (selectedCar.isEmpty) return '';
+
+    final plate = selectedCar['plate'] ?? '';
+    final model = selectedCar['model'] ?? '';
+
+    return model.isNotEmpty ? '$plate - $model' : plate;
   }
 }

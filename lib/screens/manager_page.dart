@@ -4,6 +4,8 @@ import 'cars_page.dart';
 import 'users_page.dart';
 import 'manager_profile_page.dart';
 import 'checkin_details_page.dart'; // Added import for CheckinDetailsPage
+import 'notifications_page.dart';
+import '../services/notification_service.dart';
 
 class ManagerPage extends StatefulWidget {
   const ManagerPage({super.key});
@@ -16,6 +18,7 @@ class _ManagerPageState extends State<ManagerPage> {
   List<Map<String, dynamic>> driverRecords = [];
   bool isLoading = true;
   String? errorMessage;
+  int _unreadNotificationsCount = 0;
 
   // إحصائيات حقيقية من قاعدة البيانات
   int totalCheckinsCount = 0;
@@ -28,6 +31,7 @@ class _ManagerPageState extends State<ManagerPage> {
   void initState() {
     super.initState();
     _loadDriverRecords();
+    _loadUnreadNotificationsCount();
   }
 
   Future<void> _loadDriverRecords() async {
@@ -52,6 +56,8 @@ class _ManagerPageState extends State<ManagerPage> {
       });
       // تحميل الإحصائيات بعد تحميل السجلات
       await _loadFleetData();
+      // تحديث عدد الإشعارات غير المقروءة
+      await _loadUnreadNotificationsCount();
     } catch (e) {
       setState(() {
         errorMessage = 'خطأ في تحميل البيانات: $e';
@@ -150,6 +156,28 @@ class _ManagerPageState extends State<ManagerPage> {
     return driverRecords.map((r) => r['driver_id']).toSet().length;
   }
 
+  Future<void> _loadUnreadNotificationsCount() async {
+    try {
+      final count = await NotificationService.getUnreadCount();
+      setState(() {
+        _unreadNotificationsCount = count;
+      });
+    } catch (e) {
+      debugPrint('خطأ في جلب عدد الإشعارات غير المقروءة: $e');
+    }
+  }
+
+  void _openNotifications() {
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(builder: (context) => const NotificationsPage()),
+        )
+        .then((_) {
+          // تحديث عدد الإشعارات غير المقروءة عند العودة
+          _loadUnreadNotificationsCount();
+        });
+  }
+
   @override
   Widget build(BuildContext context) {
     void openPage(Widget page) {
@@ -175,6 +203,54 @@ class _ManagerPageState extends State<ManagerPage> {
           borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
         ),
         actions: [
+          // زر الإشعارات
+          IconButton(
+            onPressed: _openNotifications,
+            icon: Stack(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4F46E5).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.notifications,
+                    color: Color(0xFF4F46E5),
+                    size: 24,
+                  ),
+                ),
+                if (_unreadNotificationsCount > 0)
+                  Positioned(
+                    right: 4,
+                    top: 4,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade500,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      child: Text(
+                        _unreadNotificationsCount > 99
+                            ? '99+'
+                            : '$_unreadNotificationsCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            tooltip: 'الإشعارات',
+          ),
           IconButton(
             onPressed: _loadDriverRecords,
             icon: const Icon(Icons.refresh),

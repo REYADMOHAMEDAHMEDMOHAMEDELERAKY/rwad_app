@@ -21,6 +21,8 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
 
   bool _isLoadingImages = false;
   String? _imageError;
+  Map<String, dynamic>? _driverInfo;
+  bool _loadingDriverInfo = false;
 
   @override
   void initState() {
@@ -45,6 +47,7 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
 
     _fadeController.forward();
     _slideController.forward();
+    _loadDriverInfo();
   }
 
   @override
@@ -52,6 +55,109 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
     _fadeController.dispose();
     _slideController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadDriverInfo() async {
+    setState(() => _loadingDriverInfo = true);
+    try {
+      final client = Supabase.instance.client;
+      final driverId = widget.checkinData['driver_id'];
+
+      if (driverId != null) {
+        // جلب بيانات السائق من جدول managers
+        final response = await client
+            .from('managers')
+            .select('id, username, full_name, role')
+            .eq('id', driverId)
+            .maybeSingle();
+
+        if (response != null) {
+          setState(() {
+            _driverInfo = Map<String, dynamic>.from(response);
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('خطأ في جلب بيانات السائق: $e');
+    } finally {
+      setState(() => _loadingDriverInfo = false);
+    }
+  }
+
+  void _showFullScreenImage(String imageUrl, String title) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(
+                child: Image.network(
+                  imageUrl,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) {
+                    return const Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.broken_image,
+                          color: Colors.white,
+                          size: 100,
+                        ),
+                        SizedBox(height: 16),
+                        Text(
+                          'فشل في تحميل الصورة',
+                          style: TextStyle(color: Colors.white, fontSize: 16),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ),
+            Positioned(
+              top: 50,
+              right: 20,
+              child: GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.7),
+                    borderRadius: BorderRadius.circular(25),
+                  ),
+                  child: const Icon(Icons.close, color: Colors.white, size: 24),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: 50,
+              left: 20,
+              right: 20,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.7),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.cairo(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildInfoCard(
@@ -148,60 +254,101 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
             ],
           ),
           child: imageUrl != null && imageUrl.isNotEmpty
-              ? ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Image.network(
-                    imageUrl,
-                    fit: BoxFit.cover,
-                    loadingBuilder: (context, child, loadingProgress) {
-                      if (loadingProgress == null) return child;
-                      return Center(
-                        child: CircularProgressIndicator(
-                          value: loadingProgress.expectedTotalBytes != null
-                              ? loadingProgress.cumulativeBytesLoaded /
-                                    loadingProgress.expectedTotalBytes!
-                              : null,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.blue.shade600,
+              ? GestureDetector(
+                  onTap: () => _showFullScreenImage(imageUrl, title),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Stack(
+                      children: [
+                        Image.network(
+                          imageUrl,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Center(
+                              child: CircularProgressIndicator(
+                                value:
+                                    loadingProgress.expectedTotalBytes != null
+                                    ? loadingProgress.cumulativeBytesLoaded /
+                                          loadingProgress.expectedTotalBytes!
+                                    : null,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.blue.shade600,
+                                ),
+                              ),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            return Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.error_outline,
+                                  size: 48,
+                                  color: Colors.red.shade400,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'خطأ في تحميل الصورة',
+                                  style: TextStyle(
+                                    color: Colors.red.shade600,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                ElevatedButton.icon(
+                                  onPressed: () {
+                                    setState(() {});
+                                  },
+                                  icon: const Icon(Icons.refresh, size: 16),
+                                  label: const Text('إعادة المحاولة'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.red.shade600,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                        // إضافة مؤشر للنقر
+                        Positioned(
+                          top: 8,
+                          left: 8,
+                          child: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.6),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.zoom_in,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'اضغط للتكبير',
+                                  style: GoogleFonts.cairo(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      );
-                    },
-                    errorBuilder: (context, error, stackTrace) {
-                      return Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.error_outline,
-                            size: 48,
-                            color: Colors.red.shade400,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'خطأ في تحميل الصورة',
-                            style: TextStyle(
-                              color: Colors.red.shade600,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          ElevatedButton.icon(
-                            onPressed: () {
-                              setState(() {});
-                            },
-                            icon: const Icon(Icons.refresh, size: 16),
-                            label: const Text('إعادة المحاولة'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red.shade600,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
+                      ],
+                    ),
                   ),
                 )
               : Column(
@@ -419,62 +566,146 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
                           ],
                         ),
                         const SizedBox(height: 20),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _buildInfoCard(
-                                'الرقم التسلسلي',
-                                '${widget.checkinData['serial'] ?? 'N/A'}',
-                                Icons.numbers,
-                                Colors.blue,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: _buildInfoCard(
-                                'معرف السائق',
-                                widget.checkinData['driver_id'] ?? 'N/A',
-                                Icons.person,
-                                Colors.green,
-                              ),
-                            ),
-                          ],
+                        _buildInfoCard(
+                          'الرقم التسلسلي',
+                          '${widget.checkinData['serial'] ?? 'N/A'}',
+                          Icons.numbers,
+                          Colors.blue,
                         ),
                         const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _buildInfoCard(
-                                'التاريخ والوقت',
-                                widget.checkinData['timestamp'] != null
-                                    ? DateTime.parse(
-                                        widget.checkinData['timestamp'],
-                                      ).toLocal().toString().split('.').first
-                                    : 'N/A',
-                                Icons.access_time,
-                                Colors.orange,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: _buildInfoCard(
-                                'آخر تحديث',
-                                widget.checkinData['updated_at'] != null
-                                    ? DateTime.parse(
-                                        widget.checkinData['updated_at'],
-                                      ).toLocal().toString().split('.').first
-                                    : 'N/A',
-                                Icons.update,
-                                Colors.purple,
-                              ),
-                            ),
-                          ],
+                        _buildInfoCard(
+                          'آخر تحديث',
+                          widget.checkinData['updated_at'] != null
+                              ? DateTime.parse(
+                                  widget.checkinData['updated_at'],
+                                ).toLocal().toString().split('.').first
+                              : 'N/A',
+                          Icons.update,
+                          Colors.purple,
                         ),
                       ],
                     ),
                   ),
 
                   const SizedBox(height: 24),
+
+                  // Driver Information Card (for managers)
+                  if (_driverInfo != null)
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Colors.green.shade50, Colors.green.shade100],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: Colors.green.shade200,
+                          width: 2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.green.withOpacity(0.1),
+                            blurRadius: 15,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.shade600,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Icon(
+                                  Icons.person,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Text(
+                                'معلومات السائق',
+                                style: GoogleFonts.cairo(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.green.shade700,
+                                ),
+                              ),
+                              if (_loadingDriverInfo) const Spacer(),
+                              if (_loadingDriverInfo)
+                                SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.green.shade600,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 20),
+                          _buildInfoCard(
+                            'اسم المستخدم',
+                            _driverInfo!['username'] ?? 'غير محدد',
+                            Icons.account_circle,
+                            Colors.green,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildInfoCard(
+                            'الاسم الكامل',
+                            _driverInfo!['full_name'] ??
+                                _driverInfo!['username'] ??
+                                'غير محدد',
+                            Icons.badge,
+                            Colors.green,
+                          ),
+                          const SizedBox(height: 12),
+                          _buildInfoCard(
+                            'الدور',
+                            _driverInfo!['role'] ?? 'سائق',
+                            Icons.work,
+                            Colors.green,
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (_driverInfo != null) const SizedBox(height: 24),
+                  if (_driverInfo == null && _loadingDriverInfo)
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: Colors.grey.shade200,
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const CircularProgressIndicator(strokeWidth: 2),
+                          const SizedBox(width: 16),
+                          Text(
+                            'جاري تحميل معلومات السائق...',
+                            style: GoogleFonts.cairo(
+                              fontSize: 16,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (_driverInfo == null && _loadingDriverInfo)
+                    const SizedBox(height: 24),
 
                   // Images Section
                   _buildImageSection(

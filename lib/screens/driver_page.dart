@@ -8,20 +8,26 @@ import 'package:google_fonts/google_fonts.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'welcome_page.dart';
+import 'driver_profile_page.dart';
 import 'dart:async';
+import '../services/notification_service.dart';
 
 class DriverPage extends StatefulWidget {
-  const DriverPage({super.key});
+  final Map<String, dynamic>? userInfo;
+
+  const DriverPage({super.key, this.userInfo});
 
   @override
   State<DriverPage> createState() => _DriverPageState();
 }
 
 class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
+  // Camera variables
   CameraController? _cameraController;
   List<CameraDescription> _cameras = [];
   bool _isInitialized = false;
   bool _isCapturing = false;
+  FlashMode _flashMode = FlashMode.off;
 
   // Location variables
   Position? _currentPosition;
@@ -45,7 +51,8 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
 
   // Driver information
   String _driverFullName = 'السائق';
-  String _driverId = 'driver_001';
+  String _driverId = '';
+  String _driverUsername = '';
 
   // Animation controllers
   late AnimationController _fadeController;
@@ -110,6 +117,24 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
       }
     } catch (e) {
       debugPrint('خطأ في تهيئة الكاميرا: $e');
+    }
+  }
+
+  Future<void> _toggleFlashMode() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
+    }
+
+    try {
+      setState(() {
+        _flashMode = _flashMode == FlashMode.off
+            ? FlashMode.torch
+            : FlashMode.off;
+      });
+      await _cameraController!.setFlashMode(_flashMode);
+      debugPrint('Flash mode changed to: $_flashMode');
+    } catch (e) {
+      debugPrint('خطأ في تغيير وضع الفلاش: $e');
     }
   }
 
@@ -204,6 +229,8 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
         _isCapturing = true;
       });
 
+      // Set flash mode before taking picture
+      await _cameraController!.setFlashMode(_flashMode);
       final XFile image = await _cameraController!.takePicture();
       setState(() {
         _beforeImage = image;
@@ -227,6 +254,8 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
         _isCapturing = true;
       });
 
+      // Set flash mode before taking picture
+      await _cameraController!.setFlashMode(_flashMode);
       final XFile image = await _cameraController!.takePicture();
       setState(() {
         _afterImage = image;
@@ -273,25 +302,54 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
           .getPublicUrl(afterFileName);
 
       // Save to database with all location details
-      await client.from('checkins').insert({
-        'driver_id': _driverId,
-        'lat': _currentPosition!.latitude,
-        'lon': _currentPosition!.longitude,
-        'before_path': beforeUrl,
-        'after_path': afterUrl,
-        'timestamp': DateTime.now().toIso8601String(),
-        'serial': _serialNumber,
-        'country': _country,
-        'city': _city,
-        'district': _district,
-        'street': _street,
-        'full_address': _fullAddress,
-        'accuracy': _currentPosition!.accuracy,
-        'altitude': _currentPosition!.altitude,
-        'speed': _currentPosition!.speed,
-        'heading': _currentPosition!.heading,
-        'notes': 'تم التقاط الصور مع تحديد الموقع التفصيلي',
-      });
+      final insertResponse = await client
+          .from('checkins')
+          .insert({
+            'driver_id': _driverId,
+            'lat': _currentPosition!.latitude,
+            'lon': _currentPosition!.longitude,
+            'before_path': beforeUrl,
+            'after_path': afterUrl,
+            'timestamp': DateTime.now().toIso8601String(),
+            'serial': _serialNumber,
+            'country': _country,
+            'city': _city,
+            'district': _district,
+            'street': _street,
+            'full_address': _fullAddress,
+            'accuracy': _currentPosition!.accuracy,
+            'altitude': _currentPosition!.altitude,
+            'speed': _currentPosition!.speed,
+            'heading': _currentPosition!.heading,
+            'notes': 'تم التقاط الصور مع تحديد الموقع التفصيلي',
+          })
+          .select()
+          .single();
+
+      // إرسال إشعار للمديرين بالتسجيل الجديد
+      try {
+        String locationText = '';
+        if (_fullAddress != null && _fullAddress!.isNotEmpty) {
+          locationText = _fullAddress!;
+        } else if (_city != null && _city!.isNotEmpty) {
+          locationText = _city!;
+        } else {
+          locationText = 'موقع غير محدد';
+        }
+
+        await NotificationService.sendNewCheckinNotification(
+          driverName: _driverFullName,
+          driverId: _driverId,
+          checkinSerial: _serialNumber,
+          checkinId: insertResponse['id'],
+          location: locationText,
+        );
+
+        debugPrint('✅ تم إرسال إشعار للمديرين بالتسجيل الجديد');
+      } catch (notificationError) {
+        debugPrint('⚠️ خطأ في إرسال الإشعار: $notificationError');
+        // لا نوقف العملية إذا فشل الإشعار
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -337,37 +395,49 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
 
   Future<void> _loadDriverInfo() async {
     try {
+      // استخدام معلومات المستخدم المرسلة من صفحة تسجيل الدخول
+      if (widget.userInfo != null) {
+        setState(() {
+          _driverFullName =
+              widget.userInfo!['full_name'] ??
+              widget.userInfo!['username'] ??
+              'السائق';
+          _driverId = widget.userInfo!['id']?.toString() ?? '';
+          _driverUsername = widget.userInfo!['username'] ?? '';
+        });
+
+        debugPrint('تم تحميل معلومات السائق: $_driverFullName');
+
+        // جلب آخر رقم تسلسلي من قاعدة البيانات
+        await _loadLastSerialNumber();
+        return;
+      }
+
+      // في حالة عدم توفر معلومات المستخدم، محاولة الحصول عليها من قاعدة البيانات
       final client = Supabase.instance.client;
 
-      // جلب معلومات السائق من جدول drivers أو managers
+      // جلب معلومات السائق من جدول managers
       final response = await client
-          .from('drivers') // أو 'managers' حسب هيكل قاعدة البيانات
-          .select('full_name')
-          .eq('id', _driverId)
+          .from('managers')
+          .select('id, username, full_name')
+          .eq('role', 'driver')
+          .limit(1)
           .maybeSingle();
 
-      if (response != null && response['full_name'] != null) {
+      if (response != null) {
         setState(() {
-          _driverFullName = response['full_name'];
+          _driverFullName =
+              response['full_name'] ?? response['username'] ?? 'السائق';
+          _driverId = response['id']?.toString() ?? '';
+          _driverUsername = response['username'] ?? '';
         });
       } else {
-        // إذا لم يتم العثور على السائق في جدول drivers، جرب جدول managers
-        final managerResponse = await client
-            .from('managers')
-            .select('full_name')
-            .eq('id', _driverId)
-            .maybeSingle();
-
-        if (managerResponse != null && managerResponse['full_name'] != null) {
-          setState(() {
-            _driverFullName = managerResponse['full_name'];
-          });
-        } else {
-          // إذا لم يتم العثور على الاسم، استخدم معرف افتراضي
-          setState(() {
-            _driverFullName = 'السائق $_driverId';
-          });
-        }
+        // إذا لم يتم العثور على السائق، استخدم قيم افتراضية
+        setState(() {
+          _driverFullName = 'السائق';
+          _driverId = 'unknown';
+          _driverUsername = 'unknown';
+        });
       }
 
       // جلب آخر رقم تسلسلي من قاعدة البيانات
@@ -375,7 +445,9 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
     } catch (e) {
       debugPrint('خطأ في جلب معلومات السائق: $e');
       setState(() {
-        _driverFullName = 'السائق $_driverId';
+        _driverFullName = 'السائق';
+        _driverId = 'unknown';
+        _driverUsername = 'unknown';
       });
     }
   }
@@ -384,26 +456,19 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
     try {
       final client = Supabase.instance.client;
 
-      // جلب آخر رقم تسلسلي من جدول checkins
-      final response = await client
-          .from('checkins')
-          .select('serial')
-          .order('serial', ascending: false)
-          .limit(1)
-          .maybeSingle();
+      // جلب عدد السجلات الموجودة في قاعدة البيانات
+      final response = await client.from('checkins').select('id');
 
-      if (response != null && response['serial'] != null) {
-        setState(() {
-          _serialNumber = response['serial'] + 1; // الرقم التالي
-        });
-      } else {
-        // إذا لم توجد سجلات سابقة، ابدأ من 1
-        setState(() {
-          _serialNumber = 1;
-        });
-      }
+      // الرقم التسلسلي = عدد السجلات + 1
+      final totalRecords = response.length;
+      setState(() {
+        _serialNumber = totalRecords + 1;
+      });
+
+      debugPrint('عدد السجلات الموجودة: $totalRecords');
+      debugPrint('الرقم التسلسلي الجديد: $_serialNumber');
     } catch (e) {
-      debugPrint('خطأ في جلب الرقم التسلسلي: $e');
+      debugPrint('خطأ في جلب عدد السجلات: $e');
       // في حالة الخطأ، استخدم رقم افتراضي
       setState(() {
         _serialNumber = 1;
@@ -412,114 +477,11 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
   }
 
   void _showProfileMenu() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          title: Row(
-            children: [
-              Icon(Icons.person, color: Colors.blue.shade600),
-              const SizedBox(width: 8),
-              const Text('قائمة السائق'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: Icon(Icons.info, color: Colors.blue.shade600),
-                title: const Text('معلومات السائق'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _showDriverInfo();
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.logout, color: Colors.red.shade600),
-                title: const Text('تسجيل الخروج'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _logout();
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  void _showDriverInfo() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          title: Row(
-            children: [
-              Icon(Icons.info, color: Colors.blue.shade600),
-              const SizedBox(width: 8),
-              const Text('معلومات السائق'),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildInfoRow('الرقم التسلسلي', '$_serialNumber'),
-                _buildInfoRow(
-                  'الوقت الحالي',
-                  _now.toLocal().toString().split('.').first,
-                ),
-                _buildInfoRow(
-                  'إحداثيات الموقع',
-                  '${_currentPosition?.latitude.toStringAsFixed(6) ?? 'N/A'}, ${_currentPosition?.longitude.toStringAsFixed(6) ?? 'N/A'}',
-                ),
-                if (_fullAddress != null && _fullAddress!.isNotEmpty)
-                  _buildInfoRow('العنوان الكامل', _fullAddress!),
-                if (_country != null && _country!.isNotEmpty)
-                  _buildInfoRow('الدولة', _country!),
-                if (_city != null && _city!.isNotEmpty)
-                  _buildInfoRow('المدينة', _city!),
-                if (_district != null && _district!.isNotEmpty)
-                  _buildInfoRow('الحي', _district!),
-                if (_street != null && _street!.isNotEmpty)
-                  _buildInfoRow('اسم الشارع', _street!),
-                if (_currentPosition != null) ...[
-                  _buildInfoRow(
-                    'دقة الموقع',
-                    '${_currentPosition!.accuracy.toStringAsFixed(2)} متر',
-                  ),
-                  _buildInfoRow(
-                    'الارتفاع',
-                    '${_currentPosition!.altitude.toStringAsFixed(2)} متر',
-                  ),
-                  _buildInfoRow(
-                    'السرعة',
-                    '${_currentPosition!.speed.toStringAsFixed(2)} م/ث',
-                  ),
-                  _buildInfoRow(
-                    'الاتجاه',
-                    '${_currentPosition!.heading.toStringAsFixed(2)} درجة',
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('إغلاق'),
-            ),
-          ],
-        );
-      },
+    // الانتقال مباشرة إلى صفحة بيانات السائق
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => DriverProfilePage(userInfo: widget.userInfo),
+      ),
     );
   }
 
@@ -568,33 +530,57 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
   Widget _buildCameraPreview() {
     if (!_isInitialized || _cameraController == null) {
       return Container(
-        height: 300,
+        height: 400,
         width: double.infinity,
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Colors.grey.shade300, Colors.grey.shade200],
+            colors: [const Color(0xFF1a1a2e), const Color(0xFF16213e)],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 15,
-              offset: const Offset(0, 8),
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 20,
+              offset: const Offset(0, 10),
             ),
           ],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Colors.blue.shade600),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(
+                Icons.camera_alt,
+                size: 48,
+                color: Colors.white.withOpacity(0.8),
+              ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             Text(
               'جاري تهيئة الكاميرا...',
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 16),
+              style: GoogleFonts.cairo(
+                color: Colors.white.withOpacity(0.9),
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: 30,
+              height: 30,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  Colors.white.withOpacity(0.8),
+                ),
+              ),
             ),
           ],
         ),
@@ -602,21 +588,157 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
     }
 
     return Container(
-      height: 300,
+      height: 400,
       width: double.infinity,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.15),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 25,
+            offset: const Offset(0, 12),
           ),
         ],
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: CameraPreview(_cameraController!),
+      child: Stack(
+        children: [
+          // Camera Preview
+          ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: SizedBox(
+              height: 400,
+              width: double.infinity,
+              child: CameraPreview(_cameraController!),
+            ),
+          ),
+          // Flash Control Button
+          Positioned(
+            top: 16,
+            right: 16,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.5),
+                borderRadius: BorderRadius.circular(50),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.3),
+                  width: 1,
+                ),
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _toggleFlashMode,
+                  borderRadius: BorderRadius.circular(50),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Icon(
+                      _flashMode == FlashMode.off
+                          ? Icons.flash_off
+                          : Icons.flash_on,
+                      color: _flashMode == FlashMode.off
+                          ? Colors.white.withOpacity(0.7)
+                          : const Color(0xFFFFD700),
+                      size: 24,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Camera Controls Overlay
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Colors.black.withOpacity(0.7)],
+                ),
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(24),
+                  bottomRight: Radius.circular(24),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildCameraButton(
+                    'قبل العمل',
+                    _beforeImage != null,
+                    () => _captureBeforeImage(),
+                    const Color(0xFF4CAF50),
+                  ),
+                  _buildCameraButton(
+                    'بعد العمل',
+                    _afterImage != null,
+                    () => _captureAfterImage(),
+                    const Color(0xFF2196F3),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCameraButton(
+    String label,
+    bool isCompleted,
+    VoidCallback onPressed,
+    Color color,
+  ) {
+    return Expanded(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 8),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: _isCapturing ? null : onPressed,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              decoration: BoxDecoration(
+                color: isCompleted
+                    ? color.withOpacity(0.2)
+                    : Colors.white.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isCompleted ? color : Colors.white.withOpacity(0.3),
+                  width: 1.5,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    isCompleted ? Icons.check_circle : Icons.camera_alt,
+                    color: isCompleted ? color : Colors.white,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      label,
+                      style: GoogleFonts.cairo(
+                        color: isCompleted ? color : Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -634,76 +756,110 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
           style: GoogleFonts.cairo(
             fontSize: 16,
             fontWeight: FontWeight.w600,
-            color: Colors.grey.shade800,
+            color: const Color(0xFF1a1a2e),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
         Container(
-          height: 200,
+          height: 240,
           width: double.infinity,
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Colors.grey.shade100, Colors.grey.shade200],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+            gradient: image != null
+                ? null
+                : LinearGradient(
+                    colors: [const Color(0xFFF8F9FA), const Color(0xFFE9ECEF)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: image != null
+                  ? const Color(0xFF28a745)
+                  : const Color(0xFFDEE2E6),
+              width: 2,
             ),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.grey.shade300, width: 2),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 5),
+                color: image != null
+                    ? const Color(0xFF28a745).withOpacity(0.2)
+                    : Colors.black.withOpacity(0.05),
+                blurRadius: 15,
+                offset: const Offset(0, 8),
               ),
             ],
           ),
           child: image != null
-              ? ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Image.file(File(image.path), fit: BoxFit.cover),
+              ? Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: Image.file(
+                        File(image.path),
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        height: double.infinity,
+                      ),
+                    ),
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF28a745),
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.2),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.check,
+                          color: Colors.white,
+                          size: 16,
+                        ),
+                      ),
+                    ),
+                  ],
                 )
               : Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      Icons.camera_alt,
-                      size: 48,
-                      color: Colors.grey.shade400,
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6c757d).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(50),
+                      ),
+                      child: Icon(
+                        Icons.camera_alt_outlined,
+                        size: 48,
+                        color: const Color(0xFF6c757d).withOpacity(0.6),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'لم يتم التقاط الصورة بعد',
+                      style: GoogleFonts.cairo(
+                        color: const Color(0xFF6c757d),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'اضغط لالتقاط الصورة',
-                      style: TextStyle(
-                        color: Colors.grey.shade600,
-                        fontSize: 14,
+                      'استخدم أزرار الكاميرا في الأعلى',
+                      style: GoogleFonts.cairo(
+                        color: const Color(0xFF6c757d).withOpacity(0.8),
+                        fontSize: 12,
                       ),
+                      textAlign: TextAlign.center,
                     ),
                   ],
                 ),
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          width: double.infinity,
-          height: 48,
-          child: ElevatedButton.icon(
-            onPressed: _isCapturing ? null : onCapture,
-            icon: Icon(
-              _isCapturing ? Icons.hourglass_empty : Icons.camera_alt,
-              size: 20,
-            ),
-            label: Text(
-              _isCapturing ? 'جاري التحميل...' : 'التقاط الصورة',
-              style: GoogleFonts.cairo(fontSize: 14),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue.shade600,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 2,
-            ),
-          ),
         ),
       ],
     );
@@ -714,422 +870,434 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
       opacity: _fadeAnimation,
       child: SlideTransition(
         position: _slideAnimation,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header with profile icon and serial number
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Colors.blue.shade50, Colors.blue.shade100],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.blue.withOpacity(0.1),
-                      blurRadius: 15,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'مرحباً بك، $_driverFullName',
-                            style: GoogleFonts.cairo(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue.shade800,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.blue.shade600,
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              'الرقم التسلسلي: $_serialNumber',
-                              style: GoogleFonts.cairo(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade200,
-                              borderRadius: BorderRadius.circular(15),
-                            ),
-                            child: Text(
-                              _now.toLocal().toString().split('.').first,
-                              style: GoogleFonts.cairo(
-                                fontSize: 14,
-                                color: Colors.grey.shade700,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    InkWell(
-                      onTap: _showProfileMenu,
-                      child: Container(
-                        width: 60,
-                        height: 60,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              Colors.blue.shade400,
-                              Colors.blue.shade600,
-                            ],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(30),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.blue.withOpacity(0.3),
-                              blurRadius: 15,
-                              offset: const Offset(0, 8),
-                            ),
-                          ],
-                        ),
-                        child: Icon(
-                          Icons.person,
-                          size: 35,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              // Camera Preview - Full width
-              _buildCameraPreview(),
-
-              const SizedBox(height: 24),
-
-              // Before and After Images side by side
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildImageDisplay(
-                      'صورة قبل العمل',
-                      _beforeImage,
-                      _captureBeforeImage,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: _buildImageDisplay(
-                      'صورة بعد العمل',
-                      _afterImage,
-                      _captureAfterImage,
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 24),
-
-              // Location coordinates display
-              Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Colors.green.shade50, Colors.green.shade100],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: Colors.green.shade300,
-                          width: 2,
-                        ),
-                      ),
-                      child: Column(
-                        children: [
-                          Icon(
-                            Icons.location_on,
-                            color: Colors.green.shade600,
-                            size: 24,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'الموقع: ${_currentPosition?.latitude.toStringAsFixed(6) ?? 'N/A'}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.green.shade700,
-                            ),
-                          ),
-                          Text(
-                            '${_currentPosition?.longitude.toStringAsFixed(6) ?? 'N/A'}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.green.shade700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Colors.blue.shade50, Colors.blue.shade100],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: Colors.blue.shade300,
-                          width: 2,
-                        ),
-                      ),
-                      child: Column(
-                        children: [
-                          Icon(
-                            Icons.location_on,
-                            color: Colors.blue.shade600,
-                            size: 24,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'الموقع: ${_currentPosition?.latitude.toStringAsFixed(6) ?? 'N/A'}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.blue.shade700,
-                            ),
-                          ),
-                          Text(
-                            '${_currentPosition?.longitude.toStringAsFixed(6) ?? 'N/A'}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.blue.shade700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 24),
-
-              // Save Button
-              Container(
-                width: double.infinity,
-                height: 60,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.green.withOpacity(0.3),
-                      blurRadius: 15,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: ElevatedButton.icon(
-                  onPressed:
-                      (_beforeImage != null &&
-                          _afterImage != null &&
-                          !_isSaving)
-                      ? _onSave
-                      : null,
-                  icon: _isSaving
-                      ? const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              Colors.white,
-                            ),
-                          ),
-                        )
-                      : const Icon(Icons.save, size: 28),
-                  label: Text(
-                    _isSaving ? 'جاري الحفظ...' : 'حفظ التسجيل',
-                    style: GoogleFonts.cairo(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green.shade600,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    elevation: 0,
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              // Current Location Display
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Colors.blue.shade50, Colors.blue.shade100],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.blue.shade200, width: 2),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.blue.withOpacity(0.1),
-                      blurRadius: 15,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.location_on,
-                          color: Colors.blue.shade600,
-                          size: 24,
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          'الموقع الحالي',
-                          style: GoogleFonts.cairo(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.blue.shade700,
-                          ),
-                        ),
-                        const Spacer(),
-                        IconButton(
-                          icon: Icon(
-                            _locationLoading
-                                ? Icons.hourglass_empty
-                                : Icons.refresh,
-                            color: Colors.blue.shade600,
-                            size: 24,
-                          ),
-                          onPressed: _locationLoading
-                              ? null
-                              : _getCurrentLocation,
-                          tooltip: 'تحديث الموقع',
-                        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Modern Welcome Card - Compact Design
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        const Color(0xFF667eea),
+                        const Color(0xFF764ba2),
                       ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
-                    const SizedBox(height: 16),
-                    if (_locationLoading)
-                      Row(
-                        children: [
-                          SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.blue.shade600,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            'جاري تحديد الموقع...',
-                            style: GoogleFonts.cairo(
-                              fontSize: 16,
-                              color: Colors.blue.shade600,
-                            ),
-                          ),
-                        ],
-                      )
-                    else if (_locationError != null)
-                      Text(
-                        _locationError!,
-                        style: TextStyle(
-                          color: Colors.red.shade600,
-                          fontSize: 14,
-                        ),
-                      )
-                    else ...[
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.blue.shade200),
-                        ),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF667eea).withOpacity(0.3),
+                        blurRadius: 20,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      // Welcome Text Section
+                      Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              _currentLocation,
+                              'مرحباً بك',
                               style: GoogleFonts.cairo(
                                 fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.white.withOpacity(0.9),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _driverFullName,
+                              style: GoogleFonts.cairo(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    'رقم $_serialNumber',
+                                    style: GoogleFonts.cairo(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _now
+                                        .toLocal()
+                                        .toString()
+                                        .split(' ')[1]
+                                        .split('.')
+                                        .first,
+                                    style: GoogleFonts.cairo(
+                                      fontSize: 12,
+                                      color: Colors.white.withOpacity(0.8),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Profile Avatar
+                      GestureDetector(
+                        onTap: _showProfileMenu,
+                        child: Container(
+                          width: 50,
+                          height: 50,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(25),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.3),
+                              width: 2,
+                            ),
+                          ),
+                          child: Icon(
+                            Icons.person,
+                            size: 24,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                // Modern Camera Preview with Built-in Controls
+                _buildCameraPreview(),
+
+                const SizedBox(height: 24),
+
+                // Image Display Gallery
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildImageDisplay(
+                        'صورة قبل العمل',
+                        _beforeImage,
+                        _captureBeforeImage,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: _buildImageDisplay(
+                        'صورة بعد العمل',
+                        _afterImage,
+                        _captureAfterImage,
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 24),
+
+                // Location coordinates display
+                Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.green.shade50,
+                              Colors.green.shade100,
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: Colors.green.shade300,
+                            width: 2,
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.location_on,
+                              color: Colors.green.shade600,
+                              size: 24,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'الموقع: ${_currentPosition?.latitude.toStringAsFixed(6) ?? 'N/A'}',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.green.shade700,
+                              ),
+                            ),
+                            Text(
+                              '${_currentPosition?.longitude.toStringAsFixed(6) ?? 'N/A'}',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.green.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Colors.blue.shade50, Colors.blue.shade100],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: Colors.blue.shade300,
+                            width: 2,
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.location_on,
+                              color: Colors.blue.shade600,
+                              size: 24,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'الموقع: ${_currentPosition?.latitude.toStringAsFixed(6) ?? 'N/A'}',
+                              style: TextStyle(
+                                fontSize: 14,
                                 fontWeight: FontWeight.w600,
                                 color: Colors.blue.shade700,
                               ),
                             ),
-                            if (_fullAddress != null &&
-                                _fullAddress!.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Text(
-                                'العنوان: $_fullAddress',
-                                style: GoogleFonts.cairo(
-                                  fontSize: 14,
-                                  color: Colors.blue.shade600,
-                                ),
+                            Text(
+                              '${_currentPosition?.longitude.toStringAsFixed(6) ?? 'N/A'}',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.blue.shade700,
                               ),
-                            ],
+                            ),
                           ],
                         ),
                       ),
-                    ],
+                    ),
                   ],
                 ),
-              ),
 
-              const SizedBox(height: 20),
-            ],
+                const SizedBox(height: 24),
+
+                // Save Button
+                Container(
+                  width: double.infinity,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.green.withOpacity(0.3),
+                        blurRadius: 15,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: ElevatedButton.icon(
+                    onPressed:
+                        (_beforeImage != null &&
+                            _afterImage != null &&
+                            !_isSaving)
+                        ? _onSave
+                        : null,
+                    icon: _isSaving
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Colors.white,
+                              ),
+                            ),
+                          )
+                        : const Icon(Icons.save, size: 28),
+                    label: Text(
+                      _isSaving ? 'جاري الحفظ...' : 'حفظ التسجيل',
+                      style: GoogleFonts.cairo(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade600,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                // Current Location Display
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.blue.shade50, Colors.blue.shade100],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.blue.shade200, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withOpacity(0.1),
+                        blurRadius: 15,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.location_on,
+                            color: Colors.blue.shade600,
+                            size: 24,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            'الموقع الحالي',
+                            style: GoogleFonts.cairo(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.blue.shade700,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            icon: Icon(
+                              _locationLoading
+                                  ? Icons.hourglass_empty
+                                  : Icons.refresh,
+                              color: Colors.blue.shade600,
+                              size: 24,
+                            ),
+                            onPressed: _locationLoading
+                                ? null
+                                : _getCurrentLocation,
+                            tooltip: 'تحديث الموقع',
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      if (_locationLoading)
+                        Row(
+                          children: [
+                            SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.blue.shade600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              'جاري تحديد الموقع...',
+                              style: GoogleFonts.cairo(
+                                fontSize: 16,
+                                color: Colors.blue.shade600,
+                              ),
+                            ),
+                          ],
+                        )
+                      else if (_locationError != null)
+                        Text(
+                          _locationError!,
+                          style: TextStyle(
+                            color: Colors.red.shade600,
+                            fontSize: 14,
+                          ),
+                        )
+                      else ...[
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.blue.shade200),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _currentLocation,
+                                style: GoogleFonts.cairo(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.blue.shade700,
+                                ),
+                              ),
+                              if (_fullAddress != null &&
+                                  _fullAddress!.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  'العنوان: $_fullAddress',
+                                  style: GoogleFonts.cairo(
+                                    fontSize: 14,
+                                    color: Colors.blue.shade600,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 20),
+              ],
+            ),
           ),
         ),
       ),
@@ -1142,19 +1310,6 @@ class _DriverPageState extends State<DriverPage> with TickerProviderStateMixin {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: Colors.grey.shade50,
-        appBar: AppBar(
-          title: Text(
-            'واجهة السائق',
-            style: GoogleFonts.cairo(fontSize: 20, fontWeight: FontWeight.w600),
-          ),
-          centerTitle: true,
-          backgroundColor: Colors.blue.shade700,
-          foregroundColor: Colors.white,
-          elevation: 0,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
-          ),
-        ),
         body: _buildDriverUI(),
       ),
     );

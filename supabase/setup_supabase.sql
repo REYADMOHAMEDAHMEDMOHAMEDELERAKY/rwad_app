@@ -32,6 +32,37 @@ create table if not exists public.managers (
   created_at timestamptz default now()
 );
 
+-- Enable RLS for the managers table
+alter table public.managers enable row level security;
+
+-- Allow authenticated users to manage managers
+create policy "Allow authenticated users to manage managers"
+on public.managers
+for all
+to authenticated
+using (true);
+
+-- Allow anonymous users to insert managers (for user registration)
+create policy "Allow anonymous insert on managers"
+on public.managers
+for insert
+to anon
+with check (true);
+
+-- Allow anonymous users to read managers (for login)
+create policy "Allow anonymous read on managers"
+on public.managers
+for select
+to anon
+using (true);
+
+-- Allow anonymous users to update managers (for login tracking)
+create policy "Allow anonymous update on managers"
+on public.managers
+for update
+to anon
+using (true);
+
 -- Optional: insert admin (you can also let the app insert)
 insert into public.managers (username, password)
 values ('admin', 'admin123')
@@ -55,12 +86,50 @@ for all
 to authenticated
 using (true);
 
+-- Allow anonymous users to read cars (for dropdown functionality)
+create policy "Allow anonymous read on cars"
+on public.cars
+for select
+to anon
+using (true);
+
+-- Allow anonymous users to insert cars (for test data)
+create policy "Allow anonymous insert on cars"
+on public.cars
+for insert
+to anon
+with check (true);
+
 create table if not exists public.car_drivers (
   id bigserial primary key,
   car_id bigint references public.cars(id) on delete cascade,
   driver_username text not null,
   created_at timestamptz default now()
 );
+
+-- Enable RLS for the car_drivers table
+alter table public.car_drivers enable row level security;
+
+-- Allow authenticated users to manage car_drivers
+create policy "Allow authenticated users to manage car_drivers"
+on public.car_drivers
+for all
+to authenticated
+using (true);
+
+-- Allow anonymous users to insert car_drivers (for app functionality)
+create policy "Allow anonymous insert on car_drivers"
+on public.car_drivers
+for insert
+to anon
+with check (true);
+
+-- Allow anonymous users to read car_drivers
+create policy "Allow anonymous read on car_drivers"
+on public.car_drivers
+for select
+to anon
+using (true);
 
 -- sample cars
 insert into public.cars (plate, model, notes) values

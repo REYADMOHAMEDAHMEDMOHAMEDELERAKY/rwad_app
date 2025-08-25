@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'driver_page.dart';
 
 class DriverLoginPage extends StatefulWidget {
@@ -28,20 +29,79 @@ class _DriverLoginPageState extends State<DriverLoginPage> {
         _isLoading = true;
       });
 
-      // محاكاة عملية تسجيل الدخول
-      await Future.delayed(const Duration(seconds: 1));
+      try {
+        final client = Supabase.instance.client;
+        final username = _usernameController.text.trim();
+        final password = _passwordController.text.trim();
 
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        // البحث عن المستخدم في قاعدة البيانات
+        final response = await client
+            .from('managers')
+            .select('id, username, full_name, role, is_suspended')
+            .eq('username', username)
+            .eq('password', password)
+            .eq('role', 'driver')
+            .maybeSingle();
 
-        // الانتقال إلى صفحة السائق
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const DriverPage()),
-        );
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+
+          if (response != null) {
+            // التحقق من حالة الحساب
+            if (response['is_suspended'] == true) {
+              _showErrorDialog('تم تعليق حسابك. يرجى التواصل مع الإدارة.');
+              return;
+            }
+
+            // الانتقال إلى صفحة السائق مع تمرير معلومات المستخدم
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(
+                builder: (context) => DriverPage(userInfo: response),
+              ),
+              (route) => false,
+            );
+          } else {
+            _showErrorDialog('اسم المستخدم أو كلمة المرور غير صحيحة');
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+          _showErrorDialog('خطأ في الاتصال: $e');
+        }
       }
     }
+  }
+
+  void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Icon(Icons.error, color: Colors.red.shade600),
+              const SizedBox(width: 8),
+              const Text('خطأ'),
+            ],
+          ),
+          content: Text(message, style: GoogleFonts.cairo(fontSize: 16)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('موافق'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override

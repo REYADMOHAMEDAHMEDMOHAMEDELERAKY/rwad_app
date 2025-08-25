@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../widgets/ui_styles.dart';
 import 'user_details_page.dart'; // Added import for UserDetailsPage
 
@@ -17,6 +18,9 @@ class _UsersPageState extends State<UsersPage> {
 
   final _phoneController = TextEditingController();
   String _selectedRole = 'driver';
+  String? _selectedCarId; // For storing selected car ID
+  List<Map<String, dynamic>> _availableCars = []; // For storing available cars
+  bool _loadingCars = false;
 
   List<Map<String, dynamic>> _users = [];
   bool _loading = false;
@@ -26,6 +30,57 @@ class _UsersPageState extends State<UsersPage> {
   void initState() {
     super.initState();
     _loadUsers();
+    _loadAvailableCars();
+  }
+
+  Future<void> _loadAvailableCars() async {
+    debugPrint('=== Starting _loadAvailableCars ===');
+    setState(() => _loadingCars = true);
+    try {
+      final client = Supabase.instance.client;
+      debugPrint('Supabase client initialized: ${client.toString()}');
+      debugPrint('Loading cars from database...');
+
+      final response = await client
+          .from('cars')
+          .select('id, plate, model, notes')
+          .order('plate', ascending: true);
+
+      debugPrint('Raw cars response type: ${response.runtimeType}');
+      debugPrint('Raw cars response: $response');
+
+      if (response != null) {
+        setState(() {
+          _availableCars = List<Map<String, dynamic>>.from(response as List);
+        });
+        debugPrint('Successfully loaded ${_availableCars.length} cars');
+
+        // Print each car for debugging
+        for (int i = 0; i < _availableCars.length; i++) {
+          final car = _availableCars[i];
+          debugPrint(
+            'Car $i: ID=${car['id']}, Plate=${car['plate']}, Model=${car['model']}, Notes=${car['notes']}',
+          );
+        }
+      } else {
+        debugPrint('No cars response received (response is null)');
+        setState(() {
+          _availableCars = [];
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading cars: $e');
+      debugPrintStack();
+      // Set empty list on error
+      setState(() {
+        _availableCars = [];
+      });
+    } finally {
+      setState(() => _loadingCars = false);
+      debugPrint(
+        '=== Finished _loadAvailableCars, cars count: ${_availableCars.length} ===',
+      );
+    }
   }
 
   @override
@@ -44,7 +99,7 @@ class _UsersPageState extends State<UsersPage> {
       final client = Supabase.instance.client;
       final res = await client
           .from('managers')
-          .select('id,username,role,created_at,is_suspended')
+          .select('id,username,role,created_at,is_suspended,full_name,phone')
           .order('id', ascending: true);
 
       if (res != null && res.isNotEmpty) {
@@ -153,7 +208,6 @@ class _UsersPageState extends State<UsersPage> {
     final username = _usernameController.text.trim();
     final password = _passwordController.text.trim();
     final fullName = _fullNameController.text.trim();
-
     final phone = _phoneController.text.trim();
 
     if (username.isEmpty || password.isEmpty || fullName.isEmpty) {
@@ -163,28 +217,50 @@ class _UsersPageState extends State<UsersPage> {
       return;
     }
 
+    // Check if driver role is selected but no car is chosen
+    if (_selectedRole == 'driver' &&
+        (_selectedCarId == null || _selectedCarId!.isEmpty)) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('يرجى اختيار سيارة للسائق')));
+      return;
+    }
+
     setState(() => _creating = true);
     try {
       final client = Supabase.instance.client;
-      await client.from('managers').insert({
-        'username': username,
-        'password': password,
-        'role': _selectedRole,
-        'is_suspended': false,
-        'full_name': fullName,
 
-        'phone': phone.isNotEmpty ? phone : '+966 50 000 0000',
-        'join_date': DateTime.now().toIso8601String().split('T')[0],
-      }).select();
+      // Create the user
+      final userResponse = await client
+          .from('managers')
+          .insert({
+            'username': username,
+            'password': password,
+            'role': _selectedRole,
+            'is_suspended': false,
+            'full_name': fullName,
+            'phone': phone.isNotEmpty ? phone : '+966 50 000 0000',
+            'join_date': DateTime.now().toIso8601String().split('T')[0],
+          })
+          .select()
+          .single();
 
-      // تنظيف الحقول
+      // If the user is a driver and a car is selected, assign the car
+      if (_selectedRole == 'driver' && _selectedCarId != null) {
+        await client.from('car_drivers').insert({
+          'car_id': int.parse(_selectedCarId!),
+          'driver_username': username,
+        });
+      }
+
+      // Clear form fields
       _usernameController.clear();
       _passwordController.clear();
       _fullNameController.clear();
-
       _phoneController.clear();
       setState(() {
         _selectedRole = 'driver';
+        _selectedCarId = null;
       });
 
       await _loadUsers();
@@ -271,6 +347,91 @@ class _UsersPageState extends State<UsersPage> {
     }
   }
 
+  Future<void> _debugTestCarConnection() async {
+    debugPrint('=== DEBUG: Testing direct car connection ===');
+    try {
+      final client = Supabase.instance.client;
+      debugPrint('Client: $client');
+
+      // Test basic connection
+      debugPrint('Testing basic connection...');
+      final testResponse = await client.from('cars').select('count');
+      debugPrint('Basic connection test result: $testResponse');
+
+      // Test full query
+      debugPrint('Testing full query...');
+      final fullResponse = await client.from('cars').select('*');
+      debugPrint('Full query result: $fullResponse');
+
+      // Test with specific fields
+      debugPrint('Testing specific fields query...');
+      final specificResponse = await client
+          .from('cars')
+          .select('id, plate, model, notes');
+      debugPrint('Specific fields result: $specificResponse');
+
+      // Force reload
+      await _loadAvailableCars();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('انتهى اختبار الاتصال. تحقق من اللوغ')),
+      );
+    } catch (e, stackTrace) {
+      debugPrint('DEBUG ERROR: $e');
+      debugPrint('STACK TRACE: $stackTrace');
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('خطأ في الاتصال: $e')));
+    }
+  }
+
+  Future<void> _addTestCars() async {
+    setState(() => _creating = true);
+    try {
+      final client = Supabase.instance.client;
+
+      // Add test cars
+      final testCars = [
+        {'plate': 'ABC-123', 'model': 'Toyota Hiace', 'notes': 'حافلة رقم 1'},
+        {'plate': 'XYZ-999', 'model': 'Nissan NV200', 'notes': 'سيارة صغيرة'},
+        {
+          'plate': 'DEF-456',
+          'model': 'Mercedes Sprinter',
+          'notes': 'حافلة متوسطة',
+        },
+        {'plate': 'GHI-789', 'model': 'Ford Transit', 'notes': 'حافلة كبيرة'},
+        {'plate': 'JKL-012', 'model': 'Hyundai H1', 'notes': 'مركبة نقل'},
+      ];
+
+      for (final car in testCars) {
+        try {
+          await client.from('cars').upsert(car);
+          debugPrint('Added test car: ${car['plate']}');
+        } catch (e) {
+          debugPrint('Error adding test car ${car['plate']}: $e');
+        }
+      }
+
+      await _loadAvailableCars();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم إضافة المركبات التجريبية')),
+      );
+    } catch (e) {
+      debugPrint('addTestCars error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('فشل إضافة المركبات التجريبية: $e')),
+      );
+    } finally {
+      if (!mounted) return;
+      setState(() => _creating = false);
+    }
+  }
+
   Future<void> _addTestUsers() async {
     setState(() => _creating = true);
     try {
@@ -351,12 +512,7 @@ class _UsersPageState extends State<UsersPage> {
             onPressed: _loadUsers,
             icon: const Icon(Icons.refresh),
             color: const Color(0xFF4F46E5),
-          ),
-          IconButton(
-            onPressed: _addTestUsers,
-            icon: const Icon(Icons.add_circle),
-            color: const Color(0xFF00C9A7),
-            tooltip: 'إضافة مستخدمين تجريبيين',
+            tooltip: 'تحديث البيانات',
           ),
         ],
       ),
@@ -403,9 +559,9 @@ class _UsersPageState extends State<UsersPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
+                          Text(
                             'إدارة المستخدمين',
-                            style: TextStyle(
+                            style: GoogleFonts.cairo(
                               color: Colors.white,
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
@@ -414,7 +570,7 @@ class _UsersPageState extends State<UsersPage> {
                           const SizedBox(height: 4),
                           Text(
                             'إضافة وإدارة المستخدمين والصلاحيات',
-                            style: TextStyle(
+                            style: GoogleFonts.cairo(
                               color: Colors.white.withOpacity(0.8),
                               fontSize: 14,
                             ),
@@ -461,12 +617,12 @@ class _UsersPageState extends State<UsersPage> {
                             ),
                           ),
                           const SizedBox(width: 12),
-                          const Text(
+                          Text(
                             'إضافة مستخدم جديد',
-                            style: TextStyle(
+                            style: GoogleFonts.cairo(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
-                              color: Color(0xFF1E293B),
+                              color: const Color(0xFF1E293B),
                             ),
                           ),
                         ],
@@ -507,10 +663,33 @@ class _UsersPageState extends State<UsersPage> {
                           ),
                           DropdownMenuItem(value: 'admin', child: Text('مدير')),
                         ],
-                        onChanged: (v) =>
-                            setState(() => _selectedRole = v ?? 'driver'),
+                        onChanged: (v) {
+                          setState(() {
+                            _selectedRole = v ?? 'driver';
+                            // Clear car selection when role changes to admin
+                            if (_selectedRole == 'admin') {
+                              _selectedCarId = null;
+                            }
+                          });
+                        },
                       ),
                       const SizedBox(height: 16),
+
+                      // Car selection dropdown - only visible for drivers
+                      if (_selectedRole == 'driver') ...[
+                        _CarSelectionDropdown(
+                          selectedCarId: _selectedCarId,
+                          availableCars: _availableCars,
+                          isLoading: _loadingCars,
+                          onChanged: (carId) {
+                            setState(() {
+                              _selectedCarId = carId;
+                            });
+                          },
+                          onRefresh: _loadAvailableCars,
+                        ),
+                        const SizedBox(height: 16),
+                      ],
 
                       const SizedBox(height: 24),
                       SizedBox(
@@ -537,9 +716,9 @@ class _UsersPageState extends State<UsersPage> {
                                     ),
                                   ),
                                 )
-                              : const Text(
+                              : Text(
                                   'إضافة المستخدم',
-                                  style: TextStyle(
+                                  style: GoogleFonts.cairo(
                                     fontSize: 16,
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -586,12 +765,12 @@ class _UsersPageState extends State<UsersPage> {
                             ),
                           ),
                           const SizedBox(width: 12),
-                          const Text(
+                          Text(
                             'قائمة المستخدمين',
-                            style: TextStyle(
+                            style: GoogleFonts.cairo(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
-                              color: Color(0xFF1E293B),
+                              color: const Color(0xFF1E293B),
                             ),
                           ),
                         ],
@@ -709,12 +888,16 @@ class _StyledTextField extends StatelessWidget {
       child: TextField(
         controller: controller,
         obscureText: isPassword,
+        style: GoogleFonts.cairo(fontSize: 14, color: const Color(0xFF1E293B)),
         decoration: InputDecoration(
           labelText: label,
           prefixIcon: Icon(icon, color: const Color(0xFF64748B)),
           border: InputBorder.none,
           contentPadding: const EdgeInsets.all(16),
-          labelStyle: const TextStyle(color: Color(0xFF64748B)),
+          labelStyle: GoogleFonts.cairo(
+            color: const Color(0xFF64748B),
+            fontSize: 14,
+          ),
         ),
       ),
     );
@@ -744,12 +927,16 @@ class _StyledDropdown extends StatelessWidget {
         value: value,
         items: items,
         onChanged: onChanged,
-        decoration: const InputDecoration(
+        style: GoogleFonts.cairo(color: const Color(0xFF1E293B), fontSize: 14),
+        decoration: InputDecoration(
           border: InputBorder.none,
-          contentPadding: EdgeInsets.all(16),
-          prefixIcon: Icon(Icons.security, color: Color(0xFF64748B)),
+          contentPadding: const EdgeInsets.all(16),
+          prefixIcon: const Icon(Icons.security, color: Color(0xFF64748B)),
+          labelStyle: GoogleFonts.cairo(
+            color: const Color(0xFF64748B),
+            fontSize: 14,
+          ),
         ),
-        style: const TextStyle(color: Color(0xFF1E293B)),
         dropdownColor: Colors.white,
       ),
     );
@@ -810,12 +997,25 @@ class _UserCard extends StatelessWidget {
                     children: [
                       Text(
                         user['full_name'] ?? user['username'] ?? '',
-                        style: const TextStyle(
+                        style: GoogleFonts.cairo(
                           fontWeight: FontWeight.w600,
                           fontSize: 16,
-                          color: Color(0xFF1E293B),
+                          color: const Color(0xFF1E293B),
                         ),
                       ),
+                      if (user['full_name'] != null &&
+                          user['full_name'].isNotEmpty &&
+                          user['username'] != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          '@${user['username']}',
+                          style: GoogleFonts.cairo(
+                            fontSize: 12,
+                            color: const Color(0xFF64748B),
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                      ],
 
                       const SizedBox(height: 8),
                       Row(
@@ -833,7 +1033,7 @@ class _UserCard extends StatelessWidget {
                             ),
                             child: Text(
                               isAdmin ? 'مدير' : 'سائق',
-                              style: TextStyle(
+                              style: GoogleFonts.cairo(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
                                 color: isAdmin
@@ -853,12 +1053,12 @@ class _UserCard extends StatelessWidget {
                                 color: const Color(0xFFFF6B6B).withOpacity(0.1),
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: const Text(
+                              child: Text(
                                 'معلق',
-                                style: TextStyle(
+                                style: GoogleFonts.cairo(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
-                                  color: Color(0xFFFF6B6B),
+                                  color: const Color(0xFFFF6B6B),
                                 ),
                               ),
                             ),
@@ -866,9 +1066,9 @@ class _UserCard extends StatelessWidget {
                           Expanded(
                             child: Text(
                               'تم الإنشاء: ${user['created_at'] ?? ''}',
-                              style: const TextStyle(
+                              style: GoogleFonts.cairo(
                                 fontSize: 12,
-                                color: Color(0xFF64748B),
+                                color: const Color(0xFF64748B),
                               ),
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -915,22 +1115,266 @@ class _EmptyUsersState extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'لا يوجد مستخدمين بعد',
-            style: TextStyle(
+            style: GoogleFonts.cairo(
               fontSize: 18,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF64748B),
+              color: const Color(0xFF64748B),
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'قم بإضافة مستخدم جديد لبدء العمل',
-            style: TextStyle(fontSize: 14, color: Color(0xFF94A3B8)),
+            style: GoogleFonts.cairo(
+              fontSize: 14,
+              color: const Color(0xFF94A3B8),
+            ),
             textAlign: TextAlign.center,
           ),
         ],
       ),
+    );
+  }
+}
+
+class _CarSelectionDropdown extends StatelessWidget {
+  final String? selectedCarId;
+  final List<Map<String, dynamic>> availableCars;
+  final bool isLoading;
+  final ValueChanged<String?> onChanged;
+  final VoidCallback onRefresh;
+
+  const _CarSelectionDropdown({
+    required this.selectedCarId,
+    required this.availableCars,
+    required this.isLoading,
+    required this.onChanged,
+    required this.onRefresh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    debugPrint(
+      'Building _CarSelectionDropdown with ${availableCars.length} cars, loading: $isLoading',
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.directions_car,
+              color: Color(0xFF64748B),
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'اختيار المركبة',
+              style: GoogleFonts.cairo(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF374151),
+              ),
+            ),
+            const Spacer(),
+            IconButton(
+              onPressed: onRefresh,
+              icon: const Icon(
+                Icons.refresh,
+                color: Color(0xFF00C9A7),
+                size: 20,
+              ),
+              tooltip: 'تحديث قائمة المركبات',
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFF),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
+          ),
+          child: isLoading
+              ? Container(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Color(0xFF4F46E5),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        'جارٍ تحميل المركبات...',
+                        style: GoogleFonts.cairo(
+                          color: const Color(0xFF64748B),
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : availableCars.isEmpty
+              ? Container(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.warning_amber_rounded,
+                        color: Color(0xFFF59E0B),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'لا توجد مركبات متاحة. يرجى إضافة مركبات أولاً',
+                          style: GoogleFonts.cairo(
+                            color: const Color(0xFFF59E0B),
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: DropdownButtonFormField<String>(
+                    value: selectedCarId,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      prefixIcon: const Icon(
+                        Icons.directions_car,
+                        color: Color(0xFF64748B),
+                        size: 20,
+                      ),
+                      hintText: 'اختر مركبة...',
+                      hintStyle: GoogleFonts.cairo(
+                        color: const Color(0xFF9CA3AF),
+                        fontSize: 14,
+                      ),
+                    ),
+                    style: GoogleFonts.cairo(
+                      color: const Color(0xFF1E293B),
+                      fontSize: 14,
+                    ),
+                    dropdownColor: Colors.white,
+                    menuMaxHeight: 250,
+                    items: availableCars.map((car) {
+                      final carId = car['id'].toString();
+                      final plate = car['plate'] ?? 'غير محدد';
+                      final model = car['model'] ?? '';
+
+                      // Ultra-simple text display
+                      String text = plate;
+                      if (model.isNotEmpty && model.length < 20) {
+                        text += ' ($model)';
+                      }
+                      // Ensure text never exceeds reasonable length
+                      if (text.length > 35) {
+                        text = text.substring(0, 32) + '...';
+                      }
+
+                      return DropdownMenuItem<String>(
+                        value: carId,
+                        child: Text(
+                          text,
+                          style: GoogleFonts.cairo(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: const Color(0xFF1E293B),
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: onChanged,
+                  ),
+                ),
+        ),
+        if (selectedCarId != null) ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF10B981).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: const Color(0xFF10B981).withOpacity(0.2),
+                width: 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.check_circle_outline,
+                  color: Color(0xFF10B981),
+                  size: 16,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'تم اختيار المركبة:',
+                        style: GoogleFonts.cairo(
+                          color: const Color(0xFF10B981),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      // Display selected car details
+                      Builder(
+                        builder: (context) {
+                          final selectedCar = availableCars.firstWhere(
+                            (car) => car['id'].toString() == selectedCarId,
+                            orElse: () => {},
+                          );
+                          if (selectedCar.isNotEmpty) {
+                            final plate = selectedCar['plate'] ?? '';
+                            final model = selectedCar['model'] ?? '';
+                            final displayText =
+                                plate + (model.isNotEmpty ? ' - $model' : '');
+                            return Container(
+                              width: double.infinity,
+                              child: Text(
+                                displayText,
+                                style: GoogleFonts.cairo(
+                                  color: const Color(0xFF047857),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 2,
+                              ),
+                            );
+                          }
+                          return const SizedBox.shrink();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
