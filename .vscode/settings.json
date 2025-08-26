@@ -1,4 +1,5 @@
 {
     "editor.rtl": true,
-    "editor.textDirection": "rtl"
+    "editor.textDirection": "rtl",
+    "cmake.sourceDirectory": "D:/flutter/New folder/rwad_app/windows"
 }
