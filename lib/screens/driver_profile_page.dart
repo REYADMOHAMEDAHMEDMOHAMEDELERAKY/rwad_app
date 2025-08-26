@@ -22,6 +22,7 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   Map<String, dynamic>? _assignedCar;
   List<Map<String, dynamic>> _driverCheckins = [];
   bool _loadingCheckins = false;
+  bool _showingAllCheckins = false; // متغير لتتبع حالة عرض جميع التسجيلات
 
   @override
   void initState() {
@@ -30,7 +31,10 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
   }
 
   Future<void> _loadDriverData() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _showingAllCheckins = false; // إعادة تعيين حالة عرض التسجيلات
+    });
     try {
       final client = Supabase.instance.client;
 
@@ -774,9 +778,9 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
         ListView.separated(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          itemCount: _driverCheckins.length > 10
-              ? 10
-              : _driverCheckins.length, // عرض أول 10 تسجيلات
+          itemCount: _showingAllCheckins
+              ? _driverCheckins.length
+              : (_driverCheckins.length > 10 ? 10 : _driverCheckins.length),
           separatorBuilder: (context, index) => const SizedBox(height: 12),
           itemBuilder: (context, index) {
             final checkin = _driverCheckins[index];
@@ -785,20 +789,95 @@ class _DriverProfilePageState extends State<DriverProfilePage> {
         ),
         if (_driverCheckins.length > 10) ...[
           const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              color: const Color(0xFF64748B).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(
-              'عرض أول 10 تسجيلات من أصل ${_driverCheckins.length}',
-              style: GoogleFonts.cairo(
-                fontSize: 12,
-                color: const Color(0xFF64748B),
+          if (!_showingAllCheckins) ...[
+            // زر عرض جميع التسجيلات
+            Container(
+              width: double.infinity,
+              height: 45,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _showingAllCheckins = true;
+                  });
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00C9A7),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 2,
+                ),
+                icon: const Icon(Icons.expand_more, size: 20),
+                label: Text(
+                  'عرض جميع التسجيلات (${_driverCheckins.length})',
+                  style: GoogleFonts.cairo(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ),
-          ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF64748B).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                'يتم عرض أول 10 تسجيلات من أصل ${_driverCheckins.length}',
+                style: GoogleFonts.cairo(
+                  fontSize: 12,
+                  color: const Color(0xFF64748B),
+                ),
+              ),
+            ),
+          ] else ...[
+            // زر إخفاء التسجيلات الإضافية
+            Container(
+              width: double.infinity,
+              height: 45,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _showingAllCheckins = false;
+                  });
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF64748B),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 2,
+                ),
+                icon: const Icon(Icons.expand_less, size: 20),
+                label: Text(
+                  'عرض أول 10 تسجيلات فقط',
+                  style: GoogleFonts.cairo(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00C9A7).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                'يتم عرض جميع التسجيلات (${_driverCheckins.length})',
+                style: GoogleFonts.cairo(
+                  fontSize: 12,
+                  color: const Color(0xFF00C9A7),
+                ),
+              ),
+            ),
+          ],
         ],
       ],
     );

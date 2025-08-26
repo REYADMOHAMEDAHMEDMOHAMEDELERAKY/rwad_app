@@ -5,6 +5,7 @@ import 'users_page.dart';
 import 'manager_profile_page.dart';
 import 'checkin_details_page.dart'; // Added import for CheckinDetailsPage
 import 'notifications_page.dart';
+import 'reports_page.dart'; // Added import for ReportsPage
 import '../services/notification_service.dart';
 
 class ManagerPage extends StatefulWidget {
@@ -20,6 +21,13 @@ class _ManagerPageState extends State<ManagerPage> {
   String? errorMessage;
   int _unreadNotificationsCount = 0;
 
+  // Pagination variables
+  int _currentPage = 1;
+  int _itemsPerPage = 10;
+  bool _hasMoreData = true;
+  bool _isLoadingMore = false;
+  int _totalRecords = 0;
+
   // إحصائيات حقيقية من قاعدة البيانات
   int totalCheckinsCount = 0;
   int uniqueDriversCount = 0;
@@ -34,31 +42,62 @@ class _ManagerPageState extends State<ManagerPage> {
     _loadUnreadNotificationsCount();
   }
 
-  Future<void> _loadDriverRecords() async {
-    debugPrint('🚀 Starting _loadDriverRecords function...');
+  Future<void> _loadDriverRecords({bool loadMore = false}) async {
+    debugPrint(
+      '🚀 Starting _loadDriverRecords function... Page: $_currentPage, LoadMore: $loadMore',
+    );
     try {
-      setState(() {
-        isLoading = true;
-        errorMessage = null;
-      });
+      if (!loadMore) {
+        setState(() {
+          isLoading = true;
+          errorMessage = null;
+          _currentPage = 1;
+          driverRecords.clear();
+          _hasMoreData = true;
+        });
+      } else {
+        setState(() {
+          _isLoadingMore = true;
+        });
+      }
 
       final client = Supabase.instance.client;
 
-      // جلب سجلات السائقين من جدول checkins
+      // Calculate offset for pagination
+      final offset = (_currentPage - 1) * _itemsPerPage;
+
+      // Get total count first (only on initial load)
+      if (!loadMore) {
+        try {
+          final countResponse = await client.from('checkins').select('id');
+          _totalRecords = countResponse.length;
+          debugPrint('📊 Total records in database: $_totalRecords');
+        } catch (e) {
+          debugPrint('❌ Error getting count: $e');
+          _totalRecords = 0;
+        }
+      }
+
+      // جلب سجلات السائقين من جدول checkins مع pagination
       final response = await client
           .from('checkins')
           .select('*')
           .order('created_at', ascending: false)
-          .limit(20);
+          .range(offset, offset + _itemsPerPage - 1);
 
-      debugPrint('📊 تم جلب ${response.length} سجل من جدول checkins');
+      debugPrint(
+        '📊 تم جلب ${response.length} سجل من جدول checkins (Page $_currentPage)',
+      );
 
-      if (response.isEmpty) {
+      // Check if we have more data
+      _hasMoreData = response.length == _itemsPerPage;
+
+      if (response.isEmpty && !loadMore) {
         debugPrint(
-          '⚠️ لا توجد سجلات في جدول checkins - قد يكون هذا هو السبب في عدم ظهور أسماء السائقين',
+          '⚠️ لا توجد سجلات في جدول checkins - قم بإنشاء سجلات تجريبية',
         );
         // Create demo data if no records exist
-        response.addAll([
+        final demoData = [
           {
             'id': 1,
             'driver_id': 'ahmed_sabry',
@@ -73,32 +112,48 @@ class _ManagerPageState extends State<ManagerPage> {
             'id': 2,
             'driver_id': 'mohammed',
             'serial': 2,
-            'created_at':
-                DateTime.now().subtract(Duration(hours: 2)).toIso8601String(),
+            'created_at': DateTime.now()
+                .subtract(Duration(hours: 2))
+                .toIso8601String(),
             'status': 'مكتمل',
             'lat': '24.7136',
             'lon': '46.6753',
             'notes': 'مثال آخر',
           },
-        ]);
+        ];
+        response.addAll(demoData);
+        _totalRecords = demoData.length;
+        _hasMoreData = false;
       }
 
       // جلب جميع المديرين مرة واحدة لتحسين الأداء
       final allDrivers = await client
           .from('managers')
-          .select('username, full_name');
+          .select('username, full_name, id');
 
       debugPrint('👥 تم جلب ${allDrivers.length} مدير/سائق من جدول managers');
 
-      // إنشاء خريطة للبحث السريع
+      // إنشاء خريطة للبحث السريع بكل من username و id
       final Map<String, String?> driverNamesMap = {};
+      final Map<String, String?> driverIdToNameMap = {};
+
       for (var driver in allDrivers) {
-        driverNamesMap[driver['username']] = driver['full_name'];
+        // ربط username بـ full_name
+        if (driver['username'] != null) {
+          driverNamesMap[driver['username']] = driver['full_name'];
+        }
+        // ربط id بـ full_name أيضاً
+        if (driver['id'] != null) {
+          driverIdToNameMap[driver['id'].toString()] = driver['full_name'];
+        }
+        debugPrint(
+          '💾 تم حفظ السائق: username=${driver['username']}, id=${driver['id']}, full_name=${driver['full_name']}',
+        );
       }
 
       List<Map<String, dynamic>> recordsWithDriverInfo = [];
 
-      // إرفاق بيانات السائق لكل سجل
+      // إرفاق بيانات الساعق لكل سجل
       for (var record in response) {
         Map<String, dynamic> recordWithDriver = Map<String, dynamic>.from(
           record,
@@ -107,39 +162,73 @@ class _ManagerPageState extends State<ManagerPage> {
         debugPrint('🔍 معالجة سجل للسائق: ${record['driver_id']}');
 
         final driverId = record['driver_id'];
-        if (driverId != null && driverNamesMap.containsKey(driverId)) {
-          recordWithDriver['driver_full_name'] = driverNamesMap[driverId];
-          recordWithDriver['driver_username'] = driverId;
-          debugPrint(
-            '✅ تم إضافة الاسم الكامل: ${driverNamesMap[driverId]} للسائق: $driverId',
-          );
+        String? fullName;
+
+        if (driverId != null) {
+          // محاولة البحث بـ username أولاً
+          fullName = driverNamesMap[driverId];
+
+          // إذا لم نجد، محاولة البحث بـ id
+          if (fullName == null || fullName.isEmpty) {
+            fullName = driverIdToNameMap[driverId.toString()];
+          }
+
+          if (fullName != null && fullName.isNotEmpty) {
+            recordWithDriver['driver_full_name'] = fullName;
+            recordWithDriver['driver_username'] = driverId;
+            debugPrint('✅ تم إضافة الاسم الكامل: $fullName للسائق: $driverId');
+          } else {
+            debugPrint('❌ لم يتم العثور على السائق $driverId في جدول managers');
+            // ربط بقيمة افتراضية إذا لم نجد الاسم
+            recordWithDriver['driver_full_name'] = 'سائق غير محدد';
+            recordWithDriver['driver_username'] = driverId;
+          }
         } else {
-          debugPrint('❌ لم يتم العثور على السائق $driverId في جدول managers');
+          debugPrint('⚠️ driver_id فارغ في هذا السجل');
+          recordWithDriver['driver_full_name'] = 'سائق غير محدد';
+          recordWithDriver['driver_username'] = null;
         }
 
         recordsWithDriverInfo.add(recordWithDriver);
       }
 
       setState(() {
-        driverRecords = recordsWithDriverInfo;
-        isLoading = false;
+        if (loadMore) {
+          driverRecords.addAll(recordsWithDriverInfo);
+          _currentPage++;
+          _isLoadingMore = false;
+        } else {
+          driverRecords = recordsWithDriverInfo;
+          isLoading = false;
+        }
       });
 
       debugPrint(
-        '📊 Final: Set ${recordsWithDriverInfo.length} driver records in state',
+        '📊 Final: Set ${driverRecords.length} total driver records in state',
       );
 
-      // تحميل الإحصائيات بعد تحميل السجلات
-      await _loadFleetData();
-      // تحديث عدد الإشعارات غير المقروءة
-      await _loadUnreadNotificationsCount();
+      // تحميل الإحصائيات بعد تحميل السجلات (only on initial load)
+      if (!loadMore) {
+        await _loadFleetData();
+        await _loadUnreadNotificationsCount();
+      }
     } catch (e) {
       setState(() {
-        errorMessage = 'خطأ في تحميل البيانات: $e';
-        isLoading = false;
+        if (loadMore) {
+          _isLoadingMore = false;
+        } else {
+          errorMessage = 'خطأ في تحميل البيانات: $e';
+          isLoading = false;
+        }
       });
       debugPrint('خطأ في تحميل سجلات السائقين: $e');
     }
+  }
+
+  // Load more records function
+  Future<void> _loadMoreRecords() async {
+    if (!_hasMoreData || _isLoadingMore) return;
+    await _loadDriverRecords(loadMore: true);
   }
 
   Future<void> _loadFleetData() async {
@@ -153,35 +242,32 @@ class _ManagerPageState extends State<ManagerPage> {
       final totalCheckins = checkinsResponse.length;
 
       // حساب عدد السائقين الفريدين
-      final uniqueDrivers =
-          checkinsResponse
-              .map((record) => record['driver_id'])
-              .where((driverId) => driverId != null)
-              .toSet()
-              .length;
+      final uniqueDrivers = checkinsResponse
+          .map((record) => record['driver_id'])
+          .where((driverId) => driverId != null)
+          .toSet()
+          .length;
 
       // حساب تسجيلات اليوم
       final today = DateTime.now();
       final todayStart = DateTime(today.year, today.month, today.day);
-      final todayCheckins =
-          checkinsResponse.where((record) {
-            if (record['created_at'] != null) {
-              final recordDate = DateTime.parse(record['created_at']);
-              return recordDate.isAfter(todayStart);
-            }
-            return false;
-          }).length;
+      final todayCheckins = checkinsResponse.where((record) {
+        if (record['created_at'] != null) {
+          final recordDate = DateTime.parse(record['created_at']);
+          return recordDate.isAfter(todayStart);
+        }
+        return false;
+      }).length;
 
       // حساب الرحلات النشطة (التي تم إنشاؤها خلال آخر 24 ساعة)
       final last24Hours = DateTime.now().subtract(const Duration(hours: 24));
-      final activeTrips =
-          checkinsResponse.where((record) {
-            if (record['created_at'] != null) {
-              final recordDate = DateTime.parse(record['created_at']);
-              return recordDate.isAfter(last24Hours);
-            }
-            return false;
-          }).length;
+      final activeTrips = checkinsResponse.where((record) {
+        if (record['created_at'] != null) {
+          final recordDate = DateTime.parse(record['created_at']);
+          return recordDate.isAfter(last24Hours);
+        }
+        return false;
+      }).length;
 
       // محاولة جلب عدد السيارات من جدول المركبات (إذا كان موجوداً)
       int carsCount = 0;
@@ -205,8 +291,10 @@ class _ManagerPageState extends State<ManagerPage> {
       // في حالة الخطأ، استخدم بيانات افتراضية من السجلات المحملة
       setState(() {
         totalCheckinsCount = driverRecords.length;
-        uniqueDriversCount =
-            driverRecords.map((r) => r['driver_id']).toSet().length;
+        uniqueDriversCount = driverRecords
+            .map((r) => r['driver_id'])
+            .toSet()
+            .length;
         totalCarsCount = uniqueDriversCount;
         activeTripsCount = 0;
         todayCheckinsCount = 0;
@@ -633,12 +721,188 @@ class _ManagerPageState extends State<ManagerPage> {
 
               const SizedBox(height: 20),
 
+              // Reports Card
+              Container(
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF00B4D8), Color(0xFF0077B6)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00B4D8).withOpacity(0.3),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => const ReportsPage(),
+                        ),
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(16),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Icon(
+                                  Icons.analytics_rounded,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              const Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'التقارير المتقدمة',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    SizedBox(height: 4),
+                                    Text(
+                                      'تقارير السيارات والسائقين مع إختيار التاريخ',
+                                      style: TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 13,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 2,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: const Icon(
+                                  Icons.arrow_forward_ios,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: Colors.white.withOpacity(0.3),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.date_range,
+                                        color: Colors.white,
+                                        size: 16,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          'اختيار التاريخ من - إلى',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: Colors.white.withOpacity(0.3),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.assessment,
+                                        color: Colors.white,
+                                        size: 16,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          'إحصائيات متقدمة',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                          maxLines: 1,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
               // Driver records section
               _DriverRecordsSection(
                 records: driverRecords,
                 isLoading: isLoading,
                 errorMessage: errorMessage,
                 onRetry: _loadDriverRecords,
+                hasMoreData: _hasMoreData,
+                isLoadingMore: _isLoadingMore,
+                onLoadMore: _loadMoreRecords,
+                currentPage: _currentPage,
+                totalRecords: _totalRecords,
+                itemsPerPage: _itemsPerPage,
               ),
             ],
           ),
@@ -965,12 +1229,24 @@ class _DriverRecordsSection extends StatelessWidget {
   final bool isLoading;
   final String? errorMessage;
   final VoidCallback onRetry;
+  final bool hasMoreData;
+  final bool isLoadingMore;
+  final VoidCallback onLoadMore;
+  final int currentPage;
+  final int totalRecords;
+  final int itemsPerPage;
 
   const _DriverRecordsSection({
     required this.records,
     required this.isLoading,
     this.errorMessage,
     required this.onRetry,
+    required this.hasMoreData,
+    required this.isLoadingMore,
+    required this.onLoadMore,
+    required this.currentPage,
+    required this.totalRecords,
+    required this.itemsPerPage,
   });
 
   @override
@@ -1007,14 +1283,38 @@ class _DriverRecordsSection extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 12),
-                const Text(
-                  'سجلات السائقين اليومية',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E293B),
+                Expanded(
+                  child: Text(
+                    'سجلات السائقين اليومية',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1E293B),
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                const SizedBox(width: 8),
+                // Pagination info
+                if (totalRecords > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00C9A7).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      '${records.length}/$totalRecords',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF00C9A7),
+                      ),
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 16),
@@ -1081,7 +1381,97 @@ class _DriverRecordsSection extends StatelessWidget {
                 ),
               )
             else
-              ...records.map((record) => _DriverRecordTile(record: record)),
+              Column(
+                children: [
+                  ...records.map((record) => _DriverRecordTile(record: record)),
+
+                  // Load more button or pagination controls
+                  if (hasMoreData || isLoadingMore) const SizedBox(height: 16),
+                  if (hasMoreData || isLoadingMore)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: const Color(0xFF4F46E5).withOpacity(0.1),
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          if (isLoadingMore)
+                            Column(
+                              children: [
+                                const CircularProgressIndicator(
+                                  color: Color(0xFF4F46E5),
+                                  strokeWidth: 2,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'جاري تحميل المزيد...',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                              ],
+                            )
+                          else if (hasMoreData)
+                            ElevatedButton.icon(
+                              onPressed: onLoadMore,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF4F46E5),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 24,
+                                  vertical: 12,
+                                ),
+                              ),
+                              icon: const Icon(
+                                Icons.keyboard_arrow_down,
+                                size: 20,
+                              ),
+                              label: Text(
+                                'تحميل المزيد ($itemsPerPage سجل)',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  if (!hasMoreData && !isLoadingMore && records.isNotEmpty)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.check_circle,
+                            color: const Color(0xFF00C9A7),
+                            size: 16,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'تم عرض جميع السجلات',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade600,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
           ],
         ),
       ),
@@ -1101,10 +1491,10 @@ class _DriverRecordTile extends StatelessWidget {
     debugPrint('   driver_id: ${record['driver_id']}');
     debugPrint('   driver_full_name: ${record['driver_full_name']}');
     debugPrint('   driver_username: ${record['driver_username']}');
+    debugPrint('   جميع البيانات: $record');
 
     // تحديد الحالة بناءً على البيانات الحقيقية
     final status = record['status'] ?? 'مكتمل';
-    final isActive = status == 'قيد التنفيذ' || status == 'active';
 
     // تنسيق التاريخ
     final createdAt = record['created_at'] ?? record['timestamp'];
@@ -1130,6 +1520,28 @@ class _DriverRecordTile extends StatelessWidget {
       }
     }
 
+    // الحصول على الاسم الكامل للسائق
+    String driverFullName;
+
+    // أولوية عرض الاسم الكامل من جدول managers
+    if (record['driver_full_name'] != null &&
+        record['driver_full_name'].toString().trim().isNotEmpty &&
+        record['driver_full_name'].toString().trim() != 'سائق غير محدد') {
+      driverFullName = record['driver_full_name'].toString().trim();
+    } else {
+      // في حالة عدم وجود اسم كامل، عرض رسالة واضحة
+      driverFullName = 'سائق غير معرّف';
+    }
+
+    // الرقم التسلسلي للرحلة
+    final serialNumber = record['serial']?.toString() ?? 'غير محدد';
+
+    // معلومات الموقع
+    final hasLocation = record['lat'] != null && record['lon'] != null;
+    final locationText = hasLocation
+        ? 'تم تحديد الموقع'
+        : 'لم يتم تحديد الموقع';
+
     return InkWell(
       onTap: () {
         Navigator.of(context).push(
@@ -1138,136 +1550,313 @@ class _DriverRecordTile extends StatelessWidget {
           ),
         );
       },
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(16),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
+        margin: const EdgeInsets.only(bottom: 16),
         decoration: BoxDecoration(
-          color:
-              isActive
-                  ? const Color(0xFF4F46E5).withOpacity(0.05)
-                  : Colors.grey.shade50,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color:
-                isActive
-                    ? const Color(0xFF4F46E5).withOpacity(0.2)
-                    : Colors.grey.shade200,
-            width: 1,
+          gradient: LinearGradient(
+            colors: [Colors.white, const Color(0xFF4F46E5).withOpacity(0.02)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color:
-                    isActive ? const Color(0xFF4F46E5) : Colors.grey.shade400,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(Icons.person, color: Colors.white, size: 16),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: const Color(0xFF4F46E5).withOpacity(0.1),
+            width: 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF4F46E5).withOpacity(0.08),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
+              spreadRadius: 0,
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header with driver info and serial number
+              Row(
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        record['driver_full_name'] != null &&
-                                record['driver_full_name'].toString().isNotEmpty
-                            ? record['driver_full_name']
-                            : record['driver_username'] ??
-                                record['driver_id'] ??
-                                'سائق غير محدد',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
+                  // Driver avatar with gradient
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF4F46E5), Color(0xFF7C3AED)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF4F46E5).withOpacity(0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 4),
                         ),
-                        decoration: BoxDecoration(
-                          color:
-                              isActive ? const Color(0xFF4F46E5) : Colors.green,
-                          borderRadius: BorderRadius.circular(12),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.person,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+
+                  // Driver name and info
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Driver full name
+                        Text(
+                          driverFullName,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF1E293B),
+                            height: 1.2,
+                          ),
                         ),
-                        child: Text(
-                          status,
+                        const SizedBox(height: 4),
+                        // Location info with icon
+                        Row(
+                          children: [
+                            Icon(
+                              hasLocation
+                                  ? Icons.location_on
+                                  : Icons.location_off,
+                              size: 12,
+                              color: hasLocation
+                                  ? const Color(0xFF00C9A7)
+                                  : Colors.grey.shade400,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              locationText,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: hasLocation
+                                    ? const Color(0xFF00C9A7)
+                                    : Colors.grey.shade500,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Serial number badge
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF00C9A7), Color(0xFF2BE7C7)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF00C9A7).withOpacity(0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '#$serialNumber',
                           style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 10,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 16),
+
+              // Status and time info
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFF),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: const Color(0xFF4F46E5).withOpacity(0.1),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    // Status
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: status == 'مكتمل'
+                                  ? const Color(0xFF00C9A7).withOpacity(0.1)
+                                  : const Color(0xFFFFA726).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              status == 'مكتمل'
+                                  ? Icons.check_circle
+                                  : Icons.pending,
+                              size: 14,
+                              color: status == 'مكتمل'
+                                  ? const Color(0xFF00C9A7)
+                                  : const Color(0xFFFFA726),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            status,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: status == 'مكتمل'
+                                  ? const Color(0xFF00C9A7)
+                                  : const Color(0xFFFFA726),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Time info
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.access_time,
+                          size: 12,
+                          color: Colors.grey.shade500,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          formattedTime,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade600,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
+                        const SizedBox(width: 12),
+                        Icon(
+                          Icons.calendar_today,
+                          size: 12,
+                          color: Colors.grey.shade500,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          formattedDate,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              // Notes section (if available)
+              if (record['notes'] != null &&
+                  record['notes'].toString().isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.note_alt,
+                        size: 14,
+                        color: Colors.grey.shade600,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          record['notes'].toString(),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey.shade700,
+                            fontStyle: FontStyle.italic,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${record['serial'] ?? 'غير محدد'} • ${record['lat'] != null && record['lon'] != null ? 'تم تحديد الموقع' : 'لم يتم تحديد الموقع'}',
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                  ),
-                  const SizedBox(height: 4),
+                ),
+              ],
+
+              const SizedBox(height: 12),
+
+              // Action indicator
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
                   Row(
                     children: [
                       Icon(
-                        Icons.access_time,
+                        Icons.touch_app,
                         size: 12,
-                        color: Colors.grey.shade500,
+                        color: const Color(0xFF4F46E5).withOpacity(0.6),
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        formattedTime,
+                        'اضغط لعرض التفاصيل',
                         style: TextStyle(
-                          color: Colors.grey.shade500,
-                          fontSize: 11,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Icon(
-                        Icons.calendar_today,
-                        size: 12,
-                        color: Colors.grey.shade500,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        formattedDate,
-                        style: TextStyle(
-                          color: Colors.grey.shade500,
-                          fontSize: 11,
+                          fontSize: 10,
+                          color: const Color(0xFF4F46E5).withOpacity(0.6),
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ],
                   ),
-                  if (record['notes'] != null &&
-                      record['notes'].toString().isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      'ملاحظات: ${record['notes']}',
-                      style: TextStyle(
-                        color: Colors.grey.shade600,
-                        fontSize: 11,
-                        fontStyle: FontStyle.italic,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4F46E5).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(20),
                     ),
-                  ],
+                    child: Icon(
+                      Icons.arrow_forward_ios,
+                      size: 12,
+                      color: const Color(0xFF4F46E5),
+                    ),
+                  ),
                 ],
               ),
-            ),
-            Icon(
-              Icons.arrow_forward_ios,
-              size: 16,
-              color: Colors.grey.shade400,
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

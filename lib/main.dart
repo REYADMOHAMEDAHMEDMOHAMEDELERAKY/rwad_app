@@ -24,7 +24,7 @@ class MyApp extends StatelessWidget {
     return BlocProvider(
       create: (_) => AuthBloc(),
       child: MaterialApp(
-        title: 'FleetTracker',
+        title: 'RwAAd',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           primarySwatch: Colors.indigo,
