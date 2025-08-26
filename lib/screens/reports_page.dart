@@ -36,32 +36,61 @@ class _ReportsPageState extends State<ReportsPage> {
   }
 
   Future<void> _selectFromDate() async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: _fromDate ?? DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
-      locale: const Locale('ar'),
-    );
-    if (picked != null && picked != _fromDate) {
-      setState(() {
-        _fromDate = picked;
-      });
+    try {
+      final DateTime? picked = await showDatePicker(
+        context: context,
+        initialDate:
+            _fromDate ?? DateTime.now().subtract(const Duration(days: 7)),
+        firstDate: DateTime(2020),
+        lastDate: _toDate ?? DateTime.now(),
+        locale: const Locale('ar'),
+      );
+      if (picked != null && picked != _fromDate) {
+        setState(() {
+          _fromDate = picked;
+          // If toDate is before fromDate, reset toDate
+          if (_toDate != null && _toDate!.isBefore(picked)) {
+            _toDate = null;
+          }
+        });
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'خطأ في اختيار التاريخ: $e',
+            style: GoogleFonts.cairo(),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
   Future<void> _selectToDate() async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: _toDate ?? DateTime.now(),
-      firstDate: _fromDate ?? DateTime(2020),
-      lastDate: DateTime.now(),
-      locale: const Locale('ar'),
-    );
-    if (picked != null && picked != _toDate) {
-      setState(() {
-        _toDate = picked;
-      });
+    try {
+      final DateTime? picked = await showDatePicker(
+        context: context,
+        initialDate: _toDate ?? DateTime.now(),
+        firstDate: _fromDate ?? DateTime(2020),
+        lastDate: DateTime.now(),
+        locale: const Locale('ar'),
+      );
+      if (picked != null && picked != _toDate) {
+        setState(() {
+          _toDate = picked;
+        });
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'خطأ في اختيار التاريخ: $e',
+            style: GoogleFonts.cairo(),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
