@@ -66,16 +66,35 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
 
       if (driverId != null) {
         // جلب بيانات السائق من جدول managers
-        final response =
+        final driverResponse =
             await client
                 .from('managers')
                 .select('id, username, full_name, role')
                 .eq('id', driverId)
                 .maybeSingle();
 
-        if (response != null) {
+        if (driverResponse != null) {
+          // جلب بيانات المركبة المخصصة للسائق
+          final carResponse =
+              await client
+                  .from('car_drivers')
+                  .select('car_id, cars(id, plate, model, notes)')
+                  .eq('driver_username', driverResponse['username'])
+                  .maybeSingle();
+
           setState(() {
-            _driverInfo = Map<String, dynamic>.from(response);
+            _driverInfo = Map<String, dynamic>.from(driverResponse);
+            // إضافة بيانات المركبة إلى بيانات السائق
+            if (carResponse != null && carResponse['cars'] != null) {
+              final carData = carResponse['cars'];
+              _driverInfo!['vehicle_plate'] = carData['plate'];
+              _driverInfo!['vehicle_model'] = carData['model'];
+              _driverInfo!['vehicle_notes'] = carData['notes'];
+            } else {
+              _driverInfo!['vehicle_plate'] = null;
+              _driverInfo!['vehicle_model'] = null;
+              _driverInfo!['vehicle_notes'] = null;
+            }
           });
         }
       }
@@ -784,12 +803,21 @@ class _CheckinDetailsPageState extends State<CheckinDetailsPage>
                             Colors.green,
                           ),
                           const SizedBox(height: 12),
-                          _buildInfoCard(
-                            'الدور',
-                            _driverInfo!['role'] ?? 'سائق',
-                            Icons.work,
-                            Colors.green,
-                          ),
+                          // عرض بيانات المركبة بدلاً من الدور
+                          if (_driverInfo!['vehicle_plate'] != null)
+                            _buildInfoCard(
+                              'المركبة المخصصة',
+                              '${_driverInfo!['vehicle_plate']} - ${_driverInfo!['vehicle_model']}',
+                              Icons.directions_car,
+                              Colors.blue,
+                            )
+                          else
+                            _buildInfoCard(
+                              'المركبة المخصصة',
+                              'لا توجد مركبة مخصصة',
+                              Icons.directions_car_outlined,
+                              Colors.grey,
+                            ),
                         ],
                       ),
                     ),
